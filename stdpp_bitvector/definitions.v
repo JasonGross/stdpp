@@ -1,12 +1,16 @@
 (** This file is maintained by Michael Sammler. *)
 From Stdlib Require Znumtheory.
 From Stdlib Require Import ZifyNat.
+From Stdlib Require Import Zmod Bits.
 From stdpp Require Export numbers.
 From stdpp Require Import countable finite.
 
 (** * bitvector library *)
 (** This file provides the [bv n] type for representing [n]-bit
-integers with the standard operations. It also provides the
+integers with the standard operations. [bv n] is the Rocq standard
+library type [bits (Z.of_N n)] (i.e. [Zmod (2 ^ Z.of_N n)]) and the
+operations are aliases of, or thin wrappers around, the operations of
+[Stdlib.Zmod]; see [ZMOD_PORT.md] for the list. It also provides the
 [bv_saturate] tactic for learning facts about the range of bit vector
 variables in context. More extensive automation can be found in
 [bitvector_auto.v].
@@ -208,6 +212,17 @@ Lemma bv_swrap_wrap n z:
   bv_swrap n (bv_wrap n z) = bv_swrap n z.
 Proof. unfold bv_swrap, bv_wrap. by rewrite Zplus_mod_idemp_l. Qed.
 
+Lemma bv_wrap_modulo n z :
+  bv_wrap n z = z `mod` 2 ^ Z.of_N n.
+Proof. done. Qed.
+Lemma bv_swrap_smodulo n z :
+  bv_swrap n z = Z.smodulo z (bv_modulus n).
+Proof.
+  unfold bv_swrap, bv_wrap, bv_half_modulus, Z.smodulo, Z.omodulo.
+  pose proof bv_modulus_pos n.
+  rewrite Z.quot_div_nonneg, Z.sub_opp_r by lia. lia.
+Qed.
+
 Lemma bv_wrap_bv_wrap n1 n2 bv :
   (n1 ≤ n2)%N →
   bv_wrap n1 (bv_wrap n2 bv) = bv_wrap n1 bv.
@@ -325,28 +340,52 @@ Proof.
 Qed.
 
 (** * Definition of [bv n] *)
-Record bv (n : N) := BV {
-  bv_unsigned : Z;
-  bv_is_wf : BvWf n bv_unsigned;
-}.
-Global Arguments bv_unsigned {_}.
-Global Arguments bv_is_wf {_}.
-Global Arguments BV _ _ {_}.
-Add Printing Constructor bv.
+(** [bv n] is the standard library type [bits (Z.of_N n)], i.e.
+[Zmod (2 ^ Z.of_N n)]. [BV n z] builds a bitvector from an integer [z]
+that is known (via [BvWf]) to be in range; [bv_unsigned] and
+[bv_signed] are thin wrappers around [Zmod.unsigned] and the
+signed interpretation. *)
+Definition bv (n : N) : Set := bits (Z.of_N n).
 
+Definition BV (n : N) (z : Z) {H : BvWf n z} : bv n :=
+  Zmod.of_small_Z (2 ^ Z.of_N n) z.
+Global Arguments BV _ _ {_}.
+Global Arguments BV : simpl never.
+
+Definition bv_unsigned {n} (b : bv n) : Z := Zmod.unsigned b.
 Global Arguments bv_unsigned : simpl never.
 
 Definition bv_signed {n} (b : bv n) := bv_swrap n (bv_unsigned b).
 
-Lemma bv_eq n (b1 b2 : bv n) :
-  b1 = b2 ↔ b1.(bv_unsigned) = b2.(bv_unsigned).
+Lemma bv_unsigned_BV n z Hwf:
+  bv_unsigned (@BV n z Hwf) = z.
 Proof.
-  destruct b1, b2. unfold bv_unsigned. split; [ naive_solver|].
-  intros. subst. f_equal. apply proof_irrel.
+  unfold bv_unsigned, BV. apply Zmod.unsigned_of_small_Z.
+  apply Z.mod_small, bv_wf_in_range, Hwf.
 Qed.
 
+Lemma bv_signed_BV n z Hwf:
+  bv_signed (@BV n z Hwf) = bv_swrap n z.
+Proof. unfold bv_signed. by rewrite bv_unsigned_BV. Qed.
+
+Lemma bv_unsigned_in_range n (b : bv n):
+  0 ≤ bv_unsigned b < bv_modulus n.
+Proof. unfold bv_unsigned. apply Zmod.unsigned_pos_bound, bv_modulus_pos. Qed.
+
+(** [bv_is_wf] used to be the second field of the [bv] record. *)
+Lemma bv_is_wf {n} (b : bv n) : BvWf n (bv_unsigned b).
+Proof. apply bv_wf_in_range, bv_unsigned_in_range. Qed.
+
+Lemma bv_signed_Zmod_signed n (b : bv n) :
+  bv_signed b = Zmod.signed b.
+Proof. unfold bv_signed, bv_unsigned. rewrite bv_swrap_smodulo. apply Zmod.smod_unsigned. Qed.
+
+Lemma bv_eq n (b1 b2 : bv n) :
+  b1 = b2 ↔ bv_unsigned b1 = bv_unsigned b2.
+Proof. unfold bv_unsigned. symmetry. apply Zmod.unsigned_inj_iff. Qed.
+
 Lemma bv_neq n (b1 b2 : bv n) :
-  b1 ≠ b2 ↔ b1.(bv_unsigned) ≠ b2.(bv_unsigned).
+  b1 ≠ b2 ↔ bv_unsigned b1 ≠ bv_unsigned b2.
 Proof. unfold not. by rewrite bv_eq. Qed.
 
 Global Instance bv_unsigned_inj n : Inj (=) (=) (@bv_unsigned n).
@@ -355,34 +394,20 @@ Proof. intros ???. by apply bv_eq. Qed.
 Definition Z_to_bv_checked (n : N) (z : Z) : option (bv n) :=
   H ← guard (BvWf n z); Some (@BV n z H).
 
-Program Definition Z_to_bv (n : N) (z : Z) : bv n :=
-  @BV n (bv_wrap n z) _.
-Next Obligation. apply bv_wrap_wf. Qed.
+Definition Z_to_bv (n : N) (z : Z) : bv n := Zmod.of_Z (2 ^ Z.of_N n) z.
 
 Lemma Z_to_bv_unsigned n z:
   bv_unsigned (Z_to_bv n z) = bv_wrap n z.
-Proof. done. Qed.
+Proof. unfold bv_unsigned, Z_to_bv, bv_wrap, bv_modulus. apply Zmod.unsigned_of_Z. Qed.
 
 Lemma Z_to_bv_signed n z:
   bv_signed (Z_to_bv n z) = bv_swrap n z.
-Proof. apply bv_swrap_wrap. Qed.
+Proof. unfold bv_signed. rewrite Z_to_bv_unsigned. apply bv_swrap_wrap. Qed.
 
 Lemma Z_to_bv_small n z:
   0 ≤ z < bv_modulus n →
   bv_unsigned (Z_to_bv n z) = z.
 Proof. rewrite Z_to_bv_unsigned. apply bv_wrap_small. Qed.
-
-Lemma bv_unsigned_BV n z Hwf:
-  bv_unsigned (@BV n z Hwf) = z.
-Proof. done. Qed.
-
-Lemma bv_signed_BV n z Hwf:
-  bv_signed (@BV n z Hwf) = bv_swrap n z.
-Proof. done. Qed.
-
-Lemma bv_unsigned_in_range n (b : bv n):
-  0 ≤ bv_unsigned b < bv_modulus n.
-Proof. apply bv_wf_in_range. apply bv_is_wf. Qed.
 
 Lemma bv_wrap_bv_unsigned n (b : bv n):
   bv_wrap n (bv_unsigned b) = bv_unsigned b.
@@ -393,13 +418,13 @@ Lemma Z_to_bv_bv_unsigned n (b : bv n):
 Proof. apply bv_eq. by rewrite Z_to_bv_unsigned, bv_wrap_bv_unsigned. Qed.
 
 Lemma bv_eq_wrap n (b1 b2 : bv n) :
-  b1 = b2 ↔ bv_wrap n b1.(bv_unsigned) = bv_wrap n b2.(bv_unsigned).
+  b1 = b2 ↔ bv_wrap n (bv_unsigned b1) = bv_wrap n (bv_unsigned b2).
 Proof.
   rewrite !bv_wrap_small; [apply bv_eq | apply bv_unsigned_in_range..].
 Qed.
 
 Lemma bv_neq_wrap n (b1 b2 : bv n) :
-  b1 ≠ b2 ↔ bv_wrap n b1.(bv_unsigned) ≠ bv_wrap n b2.(bv_unsigned).
+  b1 ≠ b2 ↔ bv_wrap n (bv_unsigned b1) ≠ bv_wrap n (bv_unsigned b2).
 Proof. unfold not. by rewrite bv_eq_wrap. Qed.
 
 Lemma bv_eq_signed n (b1 b2 : bv n) :
@@ -447,29 +472,24 @@ Lemma Z_to_bv_checked_bv_unsigned n (b : bv n):
   Z_to_bv_checked n (bv_unsigned b) = Some b.
 Proof.
   unfold Z_to_bv_checked. case_guard; simplify_option_eq.
-  - f_equal. by apply bv_eq.
+  - f_equal. apply bv_eq. by rewrite bv_unsigned_BV.
   - by pose proof bv_is_wf b.
 Qed.
 Lemma Z_to_bv_checked_Some n a (b : bv n):
   Z_to_bv_checked n a = Some b ↔ a = bv_unsigned b.
 Proof.
   split.
-  - unfold Z_to_bv_checked. case_guard; [|done]. intros ?. by simplify_option_eq.
+  - unfold Z_to_bv_checked. case_guard; [|done]. intros ?. simplify_option_eq.
+    by rewrite bv_unsigned_BV.
   - intros ->. apply Z_to_bv_checked_bv_unsigned.
 Qed.
 
 (** * Typeclass instances for [bv n] *)
-Global Program Instance bv_eq_dec n : EqDecision (bv n) := λ '(@BV _ v1 p1) '(@BV _ v2 p2),
-   match decide (v1 = v2) with
-   | left eqv => left _
-   | right eqv => right _
+Global Instance bv_eq_dec n : EqDecision (bv n) := λ b1 b2,
+   match decide (bv_unsigned b1 = bv_unsigned b2) with
+   | left eqv => left (Zmod.unsigned_inj _ b1 b2 eqv)
+   | right eqv => right (λ eqb, eqv (f_equal bv_unsigned eqb))
    end.
-Next Obligation.
-  (* TODO: Can we get a better proof term here? *)
-  intros n b1 v1 p1 ? b2 v2 p2 ????. subst.
-  rewrite (proof_irrel p1 p2). exact eq_refl.
-Defined.
-Next Obligation. intros. by injection. Qed.
 
 Global Instance bv_countable n : Countable (bv n) :=
   inj_countable bv_unsigned (Z_to_bv_checked n) (Z_to_bv_checked_bv_unsigned n).
@@ -524,11 +544,7 @@ Ltac bv_saturate_unsigned :=
   ] end.
 
 (** * Operations on [bv n] *)
-Program Definition bv_0 (n : N) :=
-  @BV n 0 _.
-Next Obligation.
-  intros n. apply bv_wf_in_range. split; [done| apply bv_modulus_pos].
-Qed.
+Definition bv_0 (n : N) : bv n := Zmod.zero.
 Global Instance bv_inhabited n : Inhabited (bv n) := populate (bv_0 n).
 
 Definition bv_succ {n} (x : bv n) : bv n :=
@@ -537,87 +553,55 @@ Definition bv_pred {n} (x : bv n) : bv n :=
   Z_to_bv n (Z.pred (bv_unsigned x)).
 
 Definition bv_add {n} (x y : bv n) : bv n := (* SMT: bvadd *)
-  Z_to_bv n (Z.add (bv_unsigned x) (bv_unsigned y)).
+  Zmod.add x y.
 Definition bv_sub {n} (x y : bv n) : bv n := (* SMT: bvsub *)
-  Z_to_bv n (Z.sub (bv_unsigned x) (bv_unsigned y)).
+  Zmod.sub x y.
 Definition bv_opp {n} (x : bv n) : bv n := (* SMT: bvneg *)
-  Z_to_bv n (Z.opp (bv_unsigned x)).
+  Zmod.opp x.
 
 Definition bv_mul {n} (x y : bv n) : bv n := (* SMT: bvmul *)
-  Z_to_bv n (Z.mul (bv_unsigned x) (bv_unsigned y)).
-Program Definition bv_divu {n} (x y : bv n) : bv n := (* SMT: bvudiv *)
-  @BV n (Z.div (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros n x y. apply bv_wf_in_range. bv_saturate.
-  destruct (decide (bv_unsigned y = 0)) as [->|?].
-  { rewrite Zdiv_0_r. lia. }
-  split; [ apply Z.div_pos; lia |].
-  apply (Z.le_lt_trans _ (bv_unsigned x)); [|lia].
-  apply Z.div_le_upper_bound; [ lia|]. nia.
-Qed.
-Program Definition bv_modu {n} (x y : bv n) : bv n := (* SMT: bvurem *)
-  @BV n (Z.modulo (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros n x y. apply bv_wf_in_range. bv_saturate.
-  destruct (decide (bv_unsigned y = 0)) as [->|?].
-  { rewrite Zmod_0_r. lia. }
-  split; [ apply Z.mod_pos; lia |].
-  apply (Z.le_lt_trans _ (bv_unsigned x)); [|lia].
-  apply Z.mod_le; lia.
-Qed.
+  Zmod.mul x y.
+(** [bv_divu] differs from [Zmod.udiv] on division by zero: [bv_divu x 0 = 0]
+(like [Z.div]) while [Zmod.udiv x 0 = -1]. See [bv_divu_udiv]. *)
+Definition bv_divu {n} (x y : bv n) : bv n := (* SMT: bvudiv *)
+  Z_to_bv n (Z.div (bv_unsigned x) (bv_unsigned y)).
+Definition bv_modu {n} (x y : bv n) : bv n := (* SMT: bvurem *)
+  Zmod.umod x y.
 Definition bv_divs {n} (x y : bv n) : bv n :=
   Z_to_bv n (Z.div (bv_signed x) (bv_signed y)).
+(** [bv_quots] differs from [Zmod.squot] on division by zero: [bv_quots x 0 = 0]
+(like [Z.quot]) while [Zmod.squot x 0 = -1]. See [bv_quots_squot]. *)
 Definition bv_quots {n} (x y : bv n) : bv n := (* SMT: bvsdiv *)
   Z_to_bv n (Z.quot (bv_signed x) (bv_signed y)).
 Definition bv_mods {n} (x y : bv n) : bv n := (* SMT: bvsmod *)
   Z_to_bv n (Z.modulo (bv_signed x) (bv_signed y)).
 Definition bv_rems {n} (x y : bv n) : bv n := (* SMT: bvsrem *)
-  Z_to_bv n (Z.rem (bv_signed x) (bv_signed y)).
+  Zmod.srem x y.
 
 Definition bv_shiftl {n} (x y : bv n) : bv n := (* SMT: bvshl *)
-  Z_to_bv n (Z.shiftl (bv_unsigned x) (bv_unsigned y)).
-Program Definition bv_shiftr {n} (x y : bv n) : bv n := (* SMT: bvlshr *)
-  @BV n (Z.shiftr (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros n x y. apply bv_wf_in_range. bv_saturate.
-  split; [ apply Z.shiftr_nonneg; lia|].
-  rewrite Z.shiftr_div_pow2; [|lia].
-  apply (Z.le_lt_trans _ (bv_unsigned x)); [|lia].
-  pose proof (Z.pow_pos_nonneg 2 (bv_unsigned y)).
-  apply Z.div_le_upper_bound; [ lia|]. nia.
-Qed.
+  Zmod.slu x (bv_unsigned y).
+Definition bv_shiftr {n} (x y : bv n) : bv n := (* SMT: bvlshr *)
+  Zmod.sru x (bv_unsigned y).
 Definition bv_ashiftr {n} (x y : bv n) : bv n := (* SMT: bvashr *)
-  Z_to_bv n (Z.shiftr (bv_signed x) (bv_unsigned y)).
+  Zmod.srs x (bv_unsigned y).
 
-Program Definition bv_or {n} (x y : bv n) : bv n := (* SMT: bvor *)
-  @BV n (Z.lor (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros. eapply bv_wf_bitwise_op; [ apply Z.lor_spec |
-    by intros; eapply Z.lor_nonneg | done | apply bv_is_wf..].
-Qed.
-Program Definition bv_and {n} (x y : bv n) : bv n := (* SMT: bvand *)
-  @BV n (Z.land (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros. eapply bv_wf_bitwise_op; [ apply Z.land_spec |
-    intros; eapply Z.land_nonneg; by left | done | apply bv_is_wf..].
-Qed.
-Program Definition bv_xor {n} (x y : bv n) : bv n := (* SMT: bvxor *)
-  @BV n (Z.lxor (bv_unsigned x) (bv_unsigned y)) _.
-Next Obligation.
-  intros. eapply bv_wf_bitwise_op; [ apply Z.lxor_spec |
-    intros; eapply Z.lxor_nonneg; naive_solver | done | apply bv_is_wf..].
-Qed.
-Program Definition bv_not {n} (x : bv n) : bv n := (* SMT: bvnot *)
-  Z_to_bv n (Z.lnot (bv_unsigned x)).
+Definition bv_or {n} (x y : bv n) : bv n := (* SMT: bvor *)
+  Zmod.or x y.
+Definition bv_and {n} (x y : bv n) : bv n := (* SMT: bvand *)
+  Zmod.and x y.
+Definition bv_xor {n} (x y : bv n) : bv n := (* SMT: bvxor *)
+  Zmod.xor x y.
+Definition bv_not {n} (x : bv n) : bv n := (* SMT: bvnot *)
+  Zmod.not x.
 
 (* [bv_zero_extends z b] extends [b] to [z] bits with 0. If [z] is
 smaller than [n], [b] is truncated. Note that [z] gives the resulting
 size instead of the number of bits to add (as SMTLIB does) to avoid a
 type-level [_ + _] *)
-Program Definition bv_zero_extend {n} (z : N) (b : bv n) : bv z := (* SMT: zero_extend *)
-  Z_to_bv z (bv_unsigned b).
+Definition bv_zero_extend {n} (z : N) (b : bv n) : bv z := (* SMT: zero_extend *)
+  Zmod.firstn (Z.of_N z) b.
 
-Program Definition bv_sign_extend {n} (z : N) (b : bv n) : bv z := (* SMT: sign_extend *)
+Definition bv_sign_extend {n} (z : N) (b : bv n) : bv z := (* SMT: sign_extend *)
   Z_to_bv z (bv_signed b).
 
 (* s is start index and l is length. Note that this is different from
@@ -629,7 +613,9 @@ Definition bv_extract {n} (s l : N) (b : bv n) : bv l :=
   Z_to_bv l (bv_unsigned b ≫ Z.of_N s).
 
 (* Note that we should always have n1 + n2 = n, but we use a parameter to avoid a type-level (_ + _) *)
-Program Definition bv_concat n {n1 n2} (b1 : bv n1) (b2 : bv n2) : bv n := (* SMT: concat *)
+(* [bv_concat] puts [b1] in the high bits; [Zmod.app] puts its first argument
+in the low bits. See [bv_concat_app]. *)
+Definition bv_concat n {n1 n2} (b1 : bv n1) (b2 : bv n2) : bv n := (* SMT: concat *)
   Z_to_bv n (Z.lor (bv_unsigned b1 ≪ Z.of_N n2) (bv_unsigned b2)).
 
 Definition bv_to_little_endian m n (z : Z) : list (bv n) :=
@@ -701,6 +687,8 @@ Definition Z_to_bv_number_notation (z : Z) :=
 Z_to_bv such that we can pass them to [Number Notation]. *)
 Local Arguments Z_to_bv {_} _.
 Local Arguments BV {_} _ {_}.
+(* [bv n] unfolds to [Zmod _], which the number notation machinery notices. *)
+#[warnings="-via-type-remapping,-via-type-mismatch"]
 Number Notation bv Z_to_bv_number_notation bv_number_notation_to_Z
   (via bv_number_notation mapping [[BV] => BVNumNonNeg, [Z_to_bv] => BVNumNeg]) : bv_scope.
 Local Arguments BV _ _ {_}.
@@ -816,153 +804,183 @@ Ltac bv_wrap_simplify_solve :=
 (** * Lemmas about [bv n] operations *)
 
 (** ** Unfolding lemmas for the operations. *)
+Lemma bv_signed_unsigned_wrap {n} (b : bv n) z :
+  bv_unsigned b = bv_wrap n z →
+  bv_signed b = bv_swrap n z.
+Proof. unfold bv_signed. intros ->. apply bv_swrap_wrap. Qed.
+
 Section unfolding.
   Context {n : N}.
   Implicit Types (b : bv n).
 
   Lemma bv_0_unsigned :
     bv_unsigned (bv_0 n) = 0.
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_0. Qed.
   Lemma bv_0_signed :
     bv_signed (bv_0 n) = 0.
-  Proof. unfold bv_0. by rewrite bv_signed_BV, bv_swrap_0. Qed.
+  Proof. unfold bv_signed. by rewrite bv_0_unsigned, bv_swrap_0. Qed.
 
   Lemma bv_succ_unsigned b :
     bv_unsigned (bv_succ b) = bv_wrap n (Z.succ (bv_unsigned b)).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_succ_signed b :
     bv_signed (bv_succ b) = bv_swrap n (Z.succ (bv_signed b)).
   Proof. unfold bv_succ. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
 
   Lemma bv_pred_unsigned b :
     bv_unsigned (bv_pred b) = bv_wrap n (Z.pred (bv_unsigned b)).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_pred_signed b :
     bv_signed (bv_pred b) = bv_swrap n (Z.pred (bv_signed b)).
   Proof. unfold bv_pred. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
 
   Lemma bv_add_unsigned b1 b2 :
     bv_unsigned (b1 + b2) = bv_wrap n (bv_unsigned b1 + bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_add. Qed.
   Lemma bv_add_signed b1 b2 :
     bv_signed (b1 + b2) = bv_swrap n (bv_signed b1 + bv_signed b2).
-  Proof. unfold bv_add. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
+  Proof. rewrite (bv_signed_unsigned_wrap _ _ (bv_add_unsigned _ _)). bv_wrap_simplify_solve. Qed.
 
   Lemma bv_sub_unsigned b1 b2 :
     bv_unsigned (b1 - b2) = bv_wrap n (bv_unsigned b1 - bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_sub. Qed.
   Lemma bv_sub_signed b1 b2 :
     bv_signed (b1 - b2) = bv_swrap n (bv_signed b1 - bv_signed b2).
-  Proof. unfold bv_sub. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
+  Proof. rewrite (bv_signed_unsigned_wrap _ _ (bv_sub_unsigned _ _)). bv_wrap_simplify_solve. Qed.
 
   Lemma bv_opp_unsigned b :
     bv_unsigned (- b) = bv_wrap n (- bv_unsigned b).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_opp. Qed.
   Lemma bv_opp_signed b :
     bv_signed (- b) = bv_swrap n (- bv_signed b).
-  Proof. unfold bv_opp. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
+  Proof. rewrite (bv_signed_unsigned_wrap _ _ (bv_opp_unsigned _)). bv_wrap_simplify_solve. Qed.
 
   Lemma bv_mul_unsigned b1 b2 :
     bv_unsigned (b1 * b2) = bv_wrap n (bv_unsigned b1 * bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_mul. Qed.
   Lemma bv_mul_signed b1 b2 :
     bv_signed (b1 * b2) = bv_swrap n (bv_signed b1 * bv_signed b2).
-  Proof. unfold bv_mul. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
+  Proof. rewrite (bv_signed_unsigned_wrap _ _ (bv_mul_unsigned _ _)). bv_wrap_simplify_solve. Qed.
 
   Lemma bv_divu_unsigned b1 b2 :
     bv_unsigned (b1 `divu` b2) = bv_unsigned b1 `div` bv_unsigned b2.
-  Proof. done. Qed.
+  Proof.
+    unfold bv_divu. rewrite Z_to_bv_unsigned. apply bv_wrap_small. bv_saturate.
+    destruct (decide (bv_unsigned b2 = 0)) as [->|?].
+    { rewrite Z.div_0_r. lia. }
+    split; [ apply Z.div_pos; lia |].
+    apply (Z.le_lt_trans _ (bv_unsigned b1)); [|lia].
+    apply Z.div_le_upper_bound; [ lia|]. nia.
+  Qed.
   Lemma bv_divu_signed b1 b2 :
     bv_signed (b1 `divu` b2) = bv_swrap n (bv_unsigned b1 `div` bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_divu_unsigned. Qed.
+  Lemma bv_divu_udiv b1 b2 :
+    bv_unsigned b2 ≠ 0 →
+    bv_divu b1 b2 = Zmod.udiv b1 b2.
+  Proof.
+    intros ?. apply bv_eq. rewrite bv_divu_unsigned. unfold bv_unsigned in *.
+    symmetry. apply Zmod.unsigned_udiv_nonneg; [|done]. pose proof bv_modulus_pos n. lia.
+  Qed.
 
   Lemma bv_modu_unsigned b1 b2 :
     bv_unsigned (b1 `modu` b2) = bv_unsigned b1 `mod` bv_unsigned b2.
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_umod. Qed.
   Lemma bv_modu_signed b1 b2 :
     bv_signed (b1 `modu` b2) = bv_swrap n (bv_unsigned b1 `mod` bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_modu_unsigned. Qed.
 
   Lemma bv_divs_unsigned b1 b2 :
     bv_unsigned (b1 `divs` b2) = bv_wrap n (bv_signed b1 `div` bv_signed b2).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_divs_signed b1 b2 :
     bv_signed (b1 `divs` b2) = bv_swrap n (bv_signed b1 `div` bv_signed b2).
-  Proof. unfold bv_divs. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
 
   Lemma bv_quots_unsigned b1 b2 :
     bv_unsigned (b1 `quots` b2) = bv_wrap n (bv_signed b1 `quot` bv_signed b2).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_quots_signed b1 b2 :
     bv_signed (b1 `quots` b2) = bv_swrap n (bv_signed b1 `quot` bv_signed b2).
-  Proof. unfold bv_quots. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
+  Lemma bv_quots_squot b1 b2 :
+    bv_signed b2 ≠ 0 →
+    bv_quots b1 b2 = Zmod.squot b1 b2.
+  Proof.
+    intros Hb2. apply bv_eq. rewrite bv_quots_unsigned.
+    unfold Zmod.squot. rewrite !bv_signed_Zmod_signed in *.
+    unfold bv_unsigned. rewrite Zmod.unsigned_of_Z.
+    by rewrite (proj2 (Z.eqb_neq _ _)) by done.
+  Qed.
 
   Lemma bv_mods_unsigned b1 b2 :
     bv_unsigned (b1 `mods` b2) = bv_wrap n (bv_signed b1 `mod` bv_signed b2).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_mods_signed b1 b2 :
     bv_signed (b1 `mods` b2) = bv_swrap n (bv_signed b1 `mod` bv_signed b2).
-  Proof. unfold bv_mods. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
 
   Lemma bv_rems_unsigned b1 b2 :
     bv_unsigned (b1 `rems` b2) = bv_wrap n (bv_signed b1 `rem` bv_signed b2).
-  Proof. done. Qed.
+  Proof. rewrite !bv_signed_Zmod_signed. apply Zmod.unsigned_of_Z. Qed.
   Lemma bv_rems_signed b1 b2 :
     bv_signed (b1 `rems` b2) = bv_swrap n (bv_signed b1 `rem` bv_signed b2).
-  Proof. unfold bv_rems. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply bv_signed_unsigned_wrap, bv_rems_unsigned. Qed.
 
   Lemma bv_shiftl_unsigned b1 b2 :
     bv_unsigned (b1 ≪ b2) = bv_wrap n (bv_unsigned b1 ≪ bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_slu. Qed.
   Lemma bv_shiftl_signed b1 b2 :
     bv_signed (b1 ≪ b2) = bv_swrap n (bv_unsigned b1 ≪ bv_unsigned b2).
-  Proof. unfold bv_shiftl. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply bv_signed_unsigned_wrap, bv_shiftl_unsigned. Qed.
 
   Lemma bv_shiftr_unsigned b1 b2 :
     bv_unsigned (b1 ≫ b2) = bv_unsigned b1 ≫ bv_unsigned b2.
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_sru. apply bv_unsigned_in_range. Qed.
   Lemma bv_shiftr_signed b1 b2 :
     bv_signed (b1 ≫ b2) = bv_swrap n (bv_unsigned b1 ≫ bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_shiftr_unsigned. Qed.
 
   Lemma bv_ashiftr_unsigned b1 b2 :
     bv_unsigned (b1 `ashiftr` b2) = bv_wrap n (bv_signed b1 ≫ bv_unsigned b2).
-  Proof. done. Qed.
+  Proof.
+    rewrite bv_signed_Zmod_signed. apply Zmod.unsigned_srs. apply bv_unsigned_in_range.
+  Qed.
   Lemma bv_ashiftr_signed b1 b2 :
     bv_signed (b1 `ashiftr` b2) = bv_swrap n (bv_signed b1 ≫ bv_unsigned b2).
-  Proof. unfold bv_ashiftr. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply bv_signed_unsigned_wrap, bv_ashiftr_unsigned. Qed.
 
   Lemma bv_or_unsigned b1 b2 :
     bv_unsigned (bv_or b1 b2) = Z.lor (bv_unsigned b1) (bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply bits.unsigned_or. Qed.
   Lemma bv_or_signed b1 b2 :
     bv_signed (bv_or b1 b2) = bv_swrap n (Z.lor (bv_unsigned b1) (bv_unsigned b2)).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_or_unsigned. Qed.
 
   Lemma bv_and_unsigned b1 b2 :
     bv_unsigned (bv_and b1 b2) = Z.land (bv_unsigned b1) (bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply bits.unsigned_and. Qed.
   Lemma bv_and_signed b1 b2 :
     bv_signed (bv_and b1 b2) = bv_swrap n (Z.land (bv_unsigned b1) (bv_unsigned b2)).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_and_unsigned. Qed.
 
   Lemma bv_xor_unsigned b1 b2 :
     bv_unsigned (bv_xor b1 b2) = Z.lxor (bv_unsigned b1) (bv_unsigned b2).
-  Proof. done. Qed.
+  Proof. apply bits.unsigned_xor. Qed.
   Lemma bv_xor_signed b1 b2 :
     bv_signed (bv_xor b1 b2) = bv_swrap n (Z.lxor (bv_unsigned b1) (bv_unsigned b2)).
-  Proof. done. Qed.
+  Proof. unfold bv_signed. by rewrite bv_xor_unsigned. Qed.
 
   Lemma bv_not_unsigned b :
     bv_unsigned (bv_not b) = bv_wrap n (Z.lnot (bv_unsigned b)).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_of_Z. Qed.
   Lemma bv_not_signed b :
     bv_signed (bv_not b) = bv_swrap n (Z.lnot (bv_unsigned b)).
-  Proof. unfold bv_not. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply bv_signed_unsigned_wrap, bv_not_unsigned. Qed.
 
   Lemma bv_zero_extend_unsigned' z b :
     bv_unsigned (bv_zero_extend z b) = bv_wrap z (bv_unsigned b).
-  Proof. done. Qed.
+  Proof. apply Zmod.unsigned_of_Z. Qed.
   (* [bv_zero_extend_unsigned] is the version that we want, but it
   only holds with a precondition. *)
   Lemma bv_zero_extend_unsigned z b :
@@ -974,14 +992,14 @@ Section unfolding.
   Qed.
   Lemma bv_zero_extend_signed z b :
     bv_signed (bv_zero_extend z b) = bv_swrap z (bv_unsigned b).
-  Proof. unfold bv_zero_extend. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply bv_signed_unsigned_wrap, bv_zero_extend_unsigned'. Qed.
 
   Lemma bv_sign_extend_unsigned z b :
     bv_unsigned (bv_sign_extend z b) = bv_wrap z (bv_signed b).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_sign_extend_signed' z b :
     bv_signed (bv_sign_extend z b) = bv_swrap z (bv_signed b).
-  Proof. unfold bv_sign_extend. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
   (* [bv_sign_extend_signed] is the version that we want, but it
   only holds with a precondition. *)
   Lemma bv_sign_extend_signed z b :
@@ -997,14 +1015,21 @@ Section unfolding.
 
   Lemma bv_extract_unsigned s l b :
     bv_unsigned (bv_extract s l b) = bv_wrap l (bv_unsigned b ≫ Z.of_N s).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_extract_signed s l b :
     bv_signed (bv_extract s l b) = bv_swrap l (bv_unsigned b ≫ Z.of_N s).
-  Proof. unfold bv_extract. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
+  Lemma bv_extract_slice s l b :
+    bv_extract s l b = Zmod.firstn (Z.of_N l) (Zmod.skipn (Z.of_N s) b).
+  Proof.
+    apply bv_eq. rewrite bv_extract_unsigned. unfold bv_unsigned.
+    rewrite bits.unsigned_firstn, bits.unsigned_skipn by lia.
+    by rewrite Z.shiftr_div_pow2 by lia.
+  Qed.
 
   Lemma bv_concat_unsigned' m  n2 b1 (b2 : bv n2) :
     bv_unsigned (bv_concat m b1 b2) = bv_wrap m (Z.lor (bv_unsigned b1 ≪ Z.of_N n2) (bv_unsigned b2)).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   (* [bv_concat_unsigned] is the version that we want, but it
   only holds with a precondition. *)
   Lemma bv_concat_unsigned m n2 b1 (b2 : bv n2) :
@@ -1021,25 +1046,33 @@ Section unfolding.
   Qed.
   Lemma bv_concat_signed m n2 b1 (b2 : bv n2) :
     bv_signed (bv_concat m b1 b2) = bv_swrap m (Z.lor (bv_unsigned b1 ≪ Z.of_N n2) (bv_unsigned b2)).
-  Proof. unfold bv_concat. rewrite Z_to_bv_signed. done. Qed.
+  Proof. apply Z_to_bv_signed. Qed.
+  (* [Zmod.app] puts its first argument in the low bits, [bv_concat] in the high bits. *)
+  Lemma bv_concat_app m n2 b1 (b2 : bv n2) :
+    bv_concat m b1 b2 = Zmod.firstn (Z.of_N m) (Zmod.app b2 b1).
+  Proof.
+    apply bv_eq. rewrite bv_concat_unsigned'. unfold bv_unsigned.
+    rewrite bits.unsigned_firstn, bits.unsigned_app by lia.
+    by rewrite Z.lor_comm.
+  Qed.
 
   Lemma bv_add_Z_unsigned b z :
     bv_unsigned (b `+Z` z) = bv_wrap n (bv_unsigned b + z).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_add_Z_signed b z :
     bv_signed (b `+Z` z) = bv_swrap n (bv_signed b + z).
   Proof. unfold bv_add_Z. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
 
   Lemma bv_sub_Z_unsigned b z :
     bv_unsigned (b `-Z` z) = bv_wrap n (bv_unsigned b - z).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_sub_Z_signed b z :
     bv_signed (b `-Z` z) = bv_swrap n (bv_signed b - z).
   Proof. unfold bv_sub_Z. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
 
   Lemma bv_mul_Z_unsigned b z:
     bv_unsigned (b `*Z` z) = bv_wrap n (bv_unsigned b * z).
-  Proof. done. Qed.
+  Proof. apply Z_to_bv_unsigned. Qed.
   Lemma bv_mul_Z_signed b z :
     bv_signed (b `*Z` z) = bv_swrap n (bv_signed b * z).
   Proof. unfold bv_mul_Z. rewrite Z_to_bv_signed. bv_wrap_simplify_solve. Qed.
@@ -1053,22 +1086,13 @@ Section properties.
 
   Lemma bv_sub_add_opp b1 b2:
     b1 - b2 = b1 + - b2.
-  Proof.
-    apply bv_eq. unfold bv_sub, bv_add, bv_opp. rewrite !Z_to_bv_unsigned.
-    bv_wrap_simplify_solve.
-  Qed.
+  Proof. symmetry. apply Zmod.add_opp_r. Qed.
 
   Global Instance bv_add_assoc : Assoc (=) (@bv_add n).
-  Proof.
-    intros ???. unfold bv_add. apply bv_eq. rewrite !Z_to_bv_unsigned.
-    bv_wrap_simplify_solve.
-  Qed.
+  Proof. intros ???. apply Zmod.add_assoc. Qed.
 
   Global Instance bv_mul_assoc : Assoc (=) (@bv_mul n).
-  Proof.
-    intros ???. unfold bv_mul. apply bv_eq. rewrite !Z_to_bv_unsigned.
-    bv_wrap_simplify_solve.
-  Qed.
+  Proof. intros ???. apply Zmod.mul_assoc. Qed.
 
   Lemma bv_add_0_l b1 b2 :
     bv_unsigned b1 = 0%Z →

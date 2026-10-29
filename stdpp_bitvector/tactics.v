@@ -1,4 +1,5 @@
 (** This file is maintained by Michael Sammler. *)
+From Stdlib Require Import Zmod.
 From stdpp.bitvector Require Export definitions.
 
 (** * bitvector tactics *)
@@ -130,12 +131,23 @@ Global Hint Resolve bv_unfold_end | 1000 : bv_unfold_db.
 Lemma bv_unfold_BV s w n z Hwf :
   BvUnfold n s w (@BV _ z Hwf) (if w then z else if s then bv_swrap n z else z).
 Proof.
-  constructor. unfold bv_unsigned.
-  destruct w, s; simpl; try done; by rewrite bv_wrap_small by by apply bv_wf_in_range.
+  constructor. destruct w, s; simpl; unfold bv_signed; rewrite bv_unsigned_BV;
+    try done; by rewrite bv_wrap_small by by apply bv_wf_in_range.
 Qed.
 (* The normal typeclass eauto version of simple apply uses quite weak unification and
    can reject applications where the BvWf proofs has a syntactically different size. *)
 Global Hint Extern 10 (BvUnfold _ _ _ (@BV _ _ _) _) => simple apply bv_unfold_BV : bv_unfold_db.
+(* [vm_compute] (e.g. via [reduce_closed]) turns a closed bitvector into
+   [Zmod.mk m z pf], not into [BV n z pf], so handle that shape too. *)
+Lemma bv_unfold_mk s w n z pf :
+  BvUnfold n s w (Zmod.mk (2 ^ Z.of_N n) z pf) (if w then z else if s then bv_swrap n z else z).
+Proof.
+  constructor.
+  assert (bv_unsigned (Zmod.mk (2 ^ Z.of_N n) z pf) = z) as Hz by done.
+  pose proof (bv_unsigned_in_range _ (Zmod.mk (2 ^ Z.of_N n) z pf)) as Hr. rewrite Hz in Hr.
+  destruct w, s; simpl; unfold bv_signed; rewrite Hz; try done; by rewrite bv_wrap_small.
+Qed.
+Global Hint Extern 10 (BvUnfold _ _ _ (Zmod.mk _ _ _) _) => apply bv_unfold_mk : bv_unfold_db.
 Lemma bv_unfold_bv_0 s w n :
   BvUnfold n s w (bv_0 n) 0.
 Proof. constructor. destruct w, s; rewrite ?bv_0_signed, ?bv_0_unsigned, ?bv_swrap_0; done. Qed.
@@ -506,7 +518,11 @@ Ltac bv_solve :=
   (* we unfold signed so we just need to saturate unsigned *)
   bv_saturate_unsigned;
   bv_solve_unfold_tac;
-  unfold bv_signed, bv_swrap, bv_wrap, bv_half_modulus, bv_modulus, bv_unsigned in *;
+  unfold bv_signed, bv_swrap, bv_wrap, bv_half_modulus, bv_modulus in *;
+  (* [bv_unsigned] is not unfolded: [simpl] would then change the hidden
+     modulus argument of [Zmod.unsigned] in the goal but not in the
+     hypotheses, and [lia] would see different atoms. *)
+  rewrite ?bv_unsigned_BV in *;
   simpl;
   lia.
 
