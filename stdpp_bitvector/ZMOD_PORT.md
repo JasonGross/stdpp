@@ -24,18 +24,55 @@ are unchanged and still match.
 
 ## Aliases (same meaning as the stdlib operation)
 
-| std++ | stdlib |
-|---|---|
-| `bv_0 n` | `Zmod.zero` |
-| `bv_add`, `bv_sub`, `bv_opp`, `bv_mul` | `Zmod.add`, `Zmod.sub`, `Zmod.opp`, `Zmod.mul` |
-| `bv_modu` | `Zmod.umod` (both give `x` for `x mod 0`) |
-| `bv_rems` | `Zmod.srem` |
-| `bv_shiftl x y`, `bv_shiftr x y`, `bv_ashiftr x y` | `Zmod.slu x (bv_unsigned y)`, `Zmod.sru x (bv_unsigned y)`, `Zmod.srs x (bv_unsigned y)` (stdlib takes the shift amount as a `Z`) |
-| `bv_or`, `bv_and`, `bv_xor`, `bv_not` | `Zmod.or`, `Zmod.and`, `Zmod.xor`, `Zmod.not` |
-| `bv_zero_extend z b` | `Zmod.firstn (Z.of_N z) b` |
+| std++ | stdlib | how |
+|---|---|---|
+| `bv_add`, `bv_sub`, `bv_opp`, `bv_mul` | `Zmod.add`, `Zmod.sub`, `Zmod.opp`, `Zmod.mul` | abbreviation |
+| `bv_modu` | `Zmod.umod` (both give `x` for `x mod 0`) | abbreviation |
+| `bv_rems` | `Zmod.srem` | abbreviation |
+| `bv_or`, `bv_and`, `bv_xor`, `bv_not` | `Zmod.or`, `Zmod.and`, `Zmod.xor`, `Zmod.not` | abbreviation |
+| `bv_0 n` | `Zmod.zero` | definition (`n` is an explicit argument) |
+| `bv_shiftl x y`, `bv_shiftr x y`, `bv_ashiftr x y` | `Zmod.slu x (bv_unsigned y)`, `Zmod.sru x (bv_unsigned y)`, `Zmod.srs x (bv_unsigned y)` | definition (stdlib takes the shift amount as a `Z`) |
+| `bv_zero_extend z b` | `Zmod.firstn (Z.of_N z) b` | definition (`Z.of_N`) |
 
-Each of these is `Definition bv_op ... := Zmod.op ...`, so stdlib lemmas apply
-after `unfold bv_op`. They are still `Global Opaque` as before.
+The ten abbreviations (`Abbreviation bv_add := Zmod.add.` and so on) make
+`bv_add x y` and `Zmod.add x y` the same term, so stdlib lemmas such as
+`bits.unsigned_add` rewrite directly, `Search bv_add` finds them, and
+`unfold bv_add` unfolds `Zmod.add`. The rest stay definitions: their
+arguments are not just bitvectors (a width, a shift amount read through
+`bv_unsigned`), so an abbreviation would need parameters and could not be
+used unapplied (`Infix`, `Assoc (=) bv_shiftl`, `fmap`).
+
+### What the abbreviations cost (all measured; see "Abbreviations" below)
+
+- The implicit argument of an abbreviated operation is the modulus, not the
+  width: `@bv_add n x y` must become `@bv_add (bv_modulus n) x y`. Neither
+  downstream project writes `@bv_add`.
+- They cannot be opaque: `Global Opaque bv_add` would make `Zmod.add` opaque
+  for every stdlib user. They are `simpl never` instead (also a global
+  setting on the `Zmod` constants, but weaker). `cbv`/`lazy`/`unfold` now go
+  through them where they did not before.
+- `bv n` is now `Zmod (bv_modulus n)` with `bv_modulus` marked `simpl never`,
+  because `simpl`/`cbn` rewrote the hidden modulus `2 ^ Z.of_N 64` to
+  `2 ^ 64` in the goal but not in a term the user typed, and
+  `destruct (a + 1)` then found nothing (rocq-linux-process-semantics
+  `State.v`). `rewrite bv_modulus_add` still works in goals that contain
+  operations at that width.
+- Their arguments have type `Zmod _`, which is bound to `Zmod_scope` only
+  in files that import `Stdlib.Zmod`; in a file that imports only
+  `stdpp.bitvector`, `bv_add x 5` and `bv_and (x ≪ 2) y` did not parse
+  unless `bv_scope` was open. `Bind Scope bv_scope with Zmod` in
+  `definitions.v` fixes that; the binding is visible to importers of
+  `definitions.v` and then also applies to arguments of a plain `Zmod m`
+  (where `+`, `-`, `*` mean the same, but `^` and the `0%Zmod` style
+  literals of `Zmod_scope` are not available).
+- The type of `bv_add x y` is `Zmod (bv_modulus n)`, not syntactically
+  `bv n`; `bv_simplify` now also accepts equalities at type `Zmod _`, and
+  `bv_unfold_db` treats `bv` as transparent.
+- Printing: `Zmod.add a b` prints as `(a + b)%bv` (or `a + b` with
+  `bv_scope` open) for anyone who imports `definitions.v`, since the std++
+  notation was declared last; stdlib lemmas display with the std++ names
+  (`Search bv_add` shows `bits.unsigned_add` as
+  `bv_unsigned (bv_add x y) = ...`).
 
 ## Wrappers whose meaning differs from the stdlib operation
 
@@ -69,20 +106,58 @@ unfolding lemmas instead of relying on conversion. New lemmas:
 (Import, not Export): users do not get the `Zmod.unsigned` coercion, the
 `bits` notation, or `Zmod_scope` unless they require `Stdlib.Zmod` themselves.
 
+## Abbreviations: what was tried
+
+Tried for each pure alias, with the std++ `.ref` tests, coq-sail and
+rocq-linux-process-semantics (rlps) as the yardstick.
+
+| name | result |
+|---|---|
+| `bv_add`, `bv_sub`, `bv_opp`, `bv_mul`, `bv_modu`, `bv_rems`, `bv_or`, `bv_and`, `bv_xor`, `bv_not` | abbreviations, kept (commit `f7ac58a` + `65d0583`). `.ref` outputs unchanged; coq-sail builds; rlps builds with the same source edits as before (none new). Three std++-internal fixes were needed (`Hint Transparent bv : bv_unfold_db`, `bv_simplify` on `=@{Zmod _}`, `bv n := Zmod (bv_modulus n)` with `bv_modulus` `simpl never`) plus `Bind Scope bv_scope with Zmod`. Before the `bv_modulus` change rlps broke in `State.v` (`cbn` changed the hidden modulus, `destruct (a + 1)` found nothing); before the `simpl never` and scope changes nothing in the two projects broke, but `bv_add x 5` without `bv_scope` open did. |
+| `bv_unsigned` (`Abbreviation bv_unsigned := Zmod.unsigned`) | not kept; the diff is in the lead's scratch copy (`b2-bv_unsigned-abbreviation.patch`). It needs `Global Arguments Zmod.unsigned : simpl never` and the `@bv_unsigned (bv_modulus ?n) ?b` pattern in `bv_unfold`; breaks `@bv_unsigned n` (two uses in rlps `MeasureLib.v`, `FileGeometricPrefixOver.v`); `rewrite bv_modulus_0 in H` fails with "abstracting over bv_modulus 0 leads to an ill-typed term" because the modulus is also the hidden argument of `bv_unsigned b`; `rewrite <-(length_fmap bv_unsigned bs)` no longer finds its pattern; and `Zmod.unsigned x` would print as `bv_unsigned x` (the abbreviation beats the coercion) for every stdlib user who imports the file. Stopped after the fourth std++-internal proof needed a rewrite. |
+| `Z_to_bv`, `bv_zero_extend`, shifts, `bv_0` | not pure aliases (`Z.of_N`, `bv_unsigned y`, explicit width); an abbreviation with parameters cannot be used unapplied (`Infix "≪" := bv_shiftl`, `Z_to_bv n <$> l`, the number notation needs `Z_to_bv` to be a constant). Not tried. |
+| `bv` (`Abbreviation bv n := bits (Z.of_N n)`) | not tried: `Bind Scope bv_scope with bv`, `Inj (=) (=) (@bv_to_bvn n)` and every instance keyed on `bv n` would need the `Zmod` form, and `Set` placement could not be forced. The definition form already makes `bv 64` and `bits 64` convertible. |
+
+Things an abbreviation keeps working: `unfold bv_add` (unfolds `Zmod.add`),
+`Arguments bv_add : simpl never`, `Opaque bv_add` (both act on `Zmod.add`
+globally), `Search`/`About` (`About bv_add` shows `Notation bv_add :=
+@Zmod.add`), `Infix "+" := bv_add`, the typeclass hint keys.
+Things it does not: `@bv_add n` (the implicit is the modulus),
+`b.(bv_unsigned)` (an abbreviation of a non-projection in `t.(f)` syntax
+raises an anomaly `Uncaught exception Not_found` in Rocq 9.2; of a primitive
+projection it works), record-syntax in general.
+
+## Reducing breakage: what was tried
+
+| breakage | fix | status |
+|---|---|---|
+| `destruct b as [z Hwf]` / `induction b` on a `bv` | `bv_rect`, `bv_rec`, `bv_ind` eliminators built from `bv_BV_unsigned : BV n (bv_unsigned b) (bv_is_wf b) = b`; `destruct b as [z Hwf] using bv_rect` gives the old shape | in `definitions.v` (commit `7e11d46`). For proofs only: a *definition* that matches on `BV` does not compute through `bv_rect` (the equality is opaque); such a definition must use `bv_unsigned b` instead, which is what the match meant. Neither downstream project matches on `BV` in a definition (0 hits for `match ... BV`, `Program`, `Equations`). |
+| `vm_compute` output prints `Zmod.mk 18446744073709551616 8 I` | number notation also maps `ZmodDef.Zmod.mk`, printing only | in `definitions.v` (commit `7e11d46`); `Eval vm_compute in Z_to_bv 64 8` prints `8%bv` again. Side effect: a `Zmod.mk` of any modulus prints with `%bv` for importers. Ltac matching `@BV _ _ _` on normalized terms still misses; a user Ltac must also match `Zmod.mk _ _ _` (rlps `StepTac.v`, `WalkTac.v`, `AsanNodesAux.v` have such matches; they did not fire in the build, so no failure). |
+| `b.(bv_unsigned)`, `b.(bv_is_wf)` | none found. `bv_unsigned` cannot be a projection; an abbreviation of `Private_to_Z` would work with `t.(f)` but uses the private field, breaks `@bv_unsigned n`, and stdlib lemmas about `Zmod.unsigned` would no longer match syntactically. Neither downstream project uses the syntax. | user-side: `bv_unsigned b` |
+| `firstorder using L` with `L` quantified over `bv` leaves the goal open | none in std++: it happens for any primitive record, with or without parameters (checked with a parameter-free one). Rocq bug to report; dropping primitive projections from `Zmod` would cost its efficiency. | user-side: `pose proof (L _ b)` (one site in coq-sail) |
+| `split`/`constructor`/`reflexivity` on `check_syscall ... = literal` 17x slower | measured with a synthetic chain of 1500 operations: primitive projections do not matter (6.0 s vs 6.3 s with a plain record); the `if small z m then z else 0` guard plus the `Is_true` proof field cost 2.3x on a field-level equality and 3.5x on a record-level one; `Global Opaque BV` does not help (the rlps probe still did not finish in 590 s). The 17x in rlps is not reproduced by these; it stays open. `Strategy` was not tried because the slow path is `constructor`'s unification, which only respects opacity. | user-side: `repeat (apply conj \|\| apply Forall_cons \|\| apply Forall_nil); check_eq` (83 sites in rlps, then 40x faster than on std++ master) |
+| `bv n` in `Set` | `Definition bv (n : N) : Set := ...` | in (commit `bde6745`) |
+| `cbn` changes the hidden modulus | `bv n := Zmod (bv_modulus n)`, `bv_modulus` `simpl never` | in (commit `f7ac58a`) |
+
+User definitions that could break were looked for in both projects
+(`Fixpoint`/`Definition` matching on `BV`, `Program`, `Equations`,
+`Record` fields of type `bv` in `Set`, `destruct` on a `bv`): only the `Set`
+case occurred (coq-sail `MachineWord.v`, fixed in `bde6745`).
+
 ## What does not stay compatible
 
-1. `BV` is a function, not a constructor. `match b with BV z H => ...` and
-   `destruct b as [z Hwf]` do not work. Workaround: use `bv_unsigned b` and
-   `bv_is_wf b`, or `pose proof (bv_unsigned_in_range _ b)`.
+1. `BV` is a function, not a constructor. `match b with BV z H => ...` does
+   not work; `destruct b as [z Hwf] using bv_rect` does. In a definition use
+   `bv_unsigned b` and `bv_is_wf b`.
 2. `b.(bv_unsigned)` and `b.(bv_is_wf)` (record projection syntax) do not
    parse any more because neither is a projection. Workaround:
    `bv_unsigned b`, `bv_is_wf b`.
 3. `vm_compute`, `native_compute` and `compute` normalize a closed bitvector to
-   `Zmod.mk 18446744073709551616 8 I` (or `Zmod.mk (2 ^ Z.of_N 64) 8 I`),
-   not to `BV 64 8 I`. It prints like that (the number notation prints only
-   `BV`-headed terms), and Ltac that matches `@BV _ _ _` on normalized terms
-   misses it. `bv_simplify`/`bv_unfold` handle the `Zmod.mk` shape
-   (`bv_unfold_mk`). Workaround in user Ltac: also match `Zmod.mk _ _ _`.
+   `Zmod.mk 18446744073709551616 8 I`, not to `BV 64 8 I`. It prints as
+   `8%bv` (the number notation maps `Zmod.mk` for printing), but Ltac that
+   matches `@BV _ _ _` on normalized terms misses it.
+   `bv_simplify`/`bv_unfold` handle the `Zmod.mk` shape (`bv_unfold_mk`).
+   Workaround in user Ltac: also match `Zmod.mk _ _ _`.
 4. `firstorder using L` with a lemma `L` quantified over a `bv n` succeeds
    without proving anything: `firstorder` cannot instantiate a quantifier
    whose domain is a primitive record (this is a Rocq limitation; it happens
@@ -122,6 +197,9 @@ unfolding lemmas instead of relying on conversion. New lemmas:
 11. The `Number Notation` declaration warns (`via-type-remapping`,
     `via-type-mismatch`) because `bv n` unfolds to `Zmod _`; the warnings are
     disabled locally. Parsing and printing of `3%bv` are unchanged.
+12. With the abbreviations: `@bv_add n` is `@bv_add (bv_modulus n)`; the ten
+    abbreviated operations are `simpl never` but not opaque; a user file that
+    imports `definitions.v` has `bv_scope` bound to `Zmod`.
 
 ## Test results
 
