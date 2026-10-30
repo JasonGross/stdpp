@@ -107,6 +107,9 @@ Global Hint Extern 1 (TCFastDone ?P) => (change P; fast_done) : bv_unfold_db.
 Global Hint Transparent BvWf andb Is_true Z.ltb Z.leb Z.compare Pos.compare
   Pos.compare_cont bv_modulus Z.pow Z.pow_pos Pos.iter Z.mul Pos.mul Z.of_N
   : bv_unfold_db.
+(* [bv_add x y] is [Zmod.add x y], whose type is [Zmod (2 ^ Z.of_N n)], and
+   the hints are stated at type [bv n]; the two must unify. *)
+Global Hint Transparent bv : bv_unfold_db.
 
 Notation bv_suwrap signed := (if signed then bv_swrap else bv_wrap).
 
@@ -140,11 +143,11 @@ Global Hint Extern 10 (BvUnfold _ _ _ (@BV _ _ _) _) => simple apply bv_unfold_B
 (* [vm_compute] (e.g. via [reduce_closed]) turns a closed bitvector into
    [Zmod.mk m z pf], not into [BV n z pf], so handle that shape too. *)
 Lemma bv_unfold_mk s w n z pf :
-  BvUnfold n s w (Zmod.mk (2 ^ Z.of_N n) z pf) (if w then z else if s then bv_swrap n z else z).
+  BvUnfold n s w (Zmod.mk (bv_modulus n) z pf) (if w then z else if s then bv_swrap n z else z).
 Proof.
   constructor.
-  assert (bv_unsigned (Zmod.mk (2 ^ Z.of_N n) z pf) = z) as Hz by done.
-  pose proof (bv_unsigned_in_range _ (Zmod.mk (2 ^ Z.of_N n) z pf)) as Hr. rewrite Hz in Hr.
+  assert (bv_unsigned (Zmod.mk (bv_modulus n) z pf) = z) as Hz by done.
+  pose proof (bv_unsigned_in_range _ (Zmod.mk (bv_modulus n) z pf)) as Hr. rewrite Hz in Hr.
   destruct w, s; simpl; unfold bv_signed; rewrite Hz; try done; by rewrite bv_wrap_small.
 Qed.
 Global Hint Extern 10 (BvUnfold _ _ _ (Zmod.mk _ _ _) _) => apply bv_unfold_mk : bv_unfold_db.
@@ -479,9 +482,13 @@ Tactic Notation "bv_simplify" :=
   with length of lists of bytes. *)
   reduce_closed_N;
   autorewrite with bv_simplify;
+  (* The type of an equality between [Zmod] operations is [Zmod (2 ^ _)],
+     not syntactically [bv _]. *)
   lazymatch goal with
   | |- _ =@{bv _} _ => apply bv_eq_wrap
   | |- not (_ =@{bv _} _) => apply bv_neq_wrap
+  | |- _ =@{Zmod _} _ => try apply bv_eq_wrap
+  | |- not (_ =@{Zmod _} _) => try apply bv_neq_wrap
   | _ => idtac
   end;
   bv_unfold;
@@ -493,6 +500,8 @@ Tactic Notation "bv_simplify" ident(H) :=
   lazymatch (type of H) with
   | _ =@{bv _} _ => apply bv_eq in H
   | not (_ =@{bv _} _) => apply bv_neq in H
+  | _ =@{Zmod _} _ => try apply bv_eq in H
+  | not (_ =@{Zmod _} _) => try apply bv_neq in H
   | _ => idtac
   end;
   do [bv_unfold] in H;

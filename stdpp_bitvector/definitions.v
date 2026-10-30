@@ -23,6 +23,7 @@ Local Open Scope Z_scope.
 
 (** * Preliminary definitions *)
 Definition bv_modulus (n : N) : Z := 2 ^ (Z.of_N n).
+Global Arguments bv_modulus : simpl never.
 Definition bv_half_modulus (n : N) : Z := bv_modulus n `div` 2.
 Definition bv_wrap (n : N) (z : Z) : Z := z `mod` bv_modulus n.
 Definition bv_swrap (n : N) (z : Z) : Z := bv_wrap n (z + bv_half_modulus n) - bv_half_modulus n.
@@ -345,10 +346,14 @@ Qed.
 that is known (via [BvWf]) to be in range; [bv_unsigned] and
 [bv_signed] are thin wrappers around [Zmod.unsigned] and the
 signed interpretation. *)
-Definition bv (n : N) : Set := bits (Z.of_N n).
+(** The modulus is written [bv_modulus n], which is [simpl never], and not
+[2 ^ Z.of_N n]: it is the hidden argument of every [Zmod] operation on
+[bv n], and [simpl]/[cbn] must not rewrite it in one place and not in another
+(a [destruct (a + 1)] would then not find [a + 1] in the goal). *)
+Definition bv (n : N) : Set := Zmod (bv_modulus n).
 
 Definition BV (n : N) (z : Z) {H : BvWf n z} : bv n :=
-  Zmod.of_small_Z (2 ^ Z.of_N n) z.
+  Zmod.of_small_Z (bv_modulus n) z.
 Global Arguments BV _ _ {_}.
 Global Arguments BV : simpl never.
 
@@ -394,11 +399,11 @@ Proof. intros ???. by apply bv_eq. Qed.
 Definition Z_to_bv_checked (n : N) (z : Z) : option (bv n) :=
   H ← guard (BvWf n z); Some (@BV n z H).
 
-Definition Z_to_bv (n : N) (z : Z) : bv n := Zmod.of_Z (2 ^ Z.of_N n) z.
+Definition Z_to_bv (n : N) (z : Z) : bv n := Zmod.of_Z (bv_modulus n) z.
 
 Lemma Z_to_bv_unsigned n z:
   bv_unsigned (Z_to_bv n z) = bv_wrap n z.
-Proof. unfold bv_unsigned, Z_to_bv, bv_wrap, bv_modulus. apply Zmod.unsigned_of_Z. Qed.
+Proof. unfold bv_unsigned, Z_to_bv, bv_wrap. apply Zmod.unsigned_of_Z. Qed.
 
 Lemma Z_to_bv_signed n z:
   bv_signed (Z_to_bv n z) = bv_swrap n z.
@@ -552,21 +557,21 @@ Definition bv_succ {n} (x : bv n) : bv n :=
 Definition bv_pred {n} (x : bv n) : bv n :=
   Z_to_bv n (Z.pred (bv_unsigned x)).
 
-Definition bv_add {n} (x y : bv n) : bv n := (* SMT: bvadd *)
-  Zmod.add x y.
-Definition bv_sub {n} (x y : bv n) : bv n := (* SMT: bvsub *)
-  Zmod.sub x y.
-Definition bv_opp {n} (x : bv n) : bv n := (* SMT: bvneg *)
-  Zmod.opp x.
+(** The operations whose meaning agrees with a [Zmod] operation and whose
+arguments are only bitvectors are abbreviations of the [Zmod] operation, so
+that [bv_add x y] and [Zmod.add x y] are the same term. The implicit
+argument of these is the modulus [2 ^ Z.of_N n], not [n]: write
+[@bv_add (2 ^ Z.of_N n)] instead of [@bv_add n]. *)
+Abbreviation bv_add := Zmod.add. (* SMT: bvadd *)
+Abbreviation bv_sub := Zmod.sub. (* SMT: bvsub *)
+Abbreviation bv_opp := Zmod.opp. (* SMT: bvneg *)
 
-Definition bv_mul {n} (x y : bv n) : bv n := (* SMT: bvmul *)
-  Zmod.mul x y.
+Abbreviation bv_mul := Zmod.mul. (* SMT: bvmul *)
 (** [bv_divu] differs from [Zmod.udiv] on division by zero: [bv_divu x 0 = 0]
 (like [Z.div]) while [Zmod.udiv x 0 = -1]. See [bv_divu_udiv]. *)
 Definition bv_divu {n} (x y : bv n) : bv n := (* SMT: bvudiv *)
   Z_to_bv n (Z.div (bv_unsigned x) (bv_unsigned y)).
-Definition bv_modu {n} (x y : bv n) : bv n := (* SMT: bvurem *)
-  Zmod.umod x y.
+Abbreviation bv_modu := Zmod.umod. (* SMT: bvurem *)
 Definition bv_divs {n} (x y : bv n) : bv n :=
   Z_to_bv n (Z.div (bv_signed x) (bv_signed y)).
 (** [bv_quots] differs from [Zmod.squot] on division by zero: [bv_quots x 0 = 0]
@@ -575,8 +580,7 @@ Definition bv_quots {n} (x y : bv n) : bv n := (* SMT: bvsdiv *)
   Z_to_bv n (Z.quot (bv_signed x) (bv_signed y)).
 Definition bv_mods {n} (x y : bv n) : bv n := (* SMT: bvsmod *)
   Z_to_bv n (Z.modulo (bv_signed x) (bv_signed y)).
-Definition bv_rems {n} (x y : bv n) : bv n := (* SMT: bvsrem *)
-  Zmod.srem x y.
+Abbreviation bv_rems := Zmod.srem. (* SMT: bvsrem *)
 
 Definition bv_shiftl {n} (x y : bv n) : bv n := (* SMT: bvshl *)
   Zmod.slu x (bv_unsigned y).
@@ -585,14 +589,25 @@ Definition bv_shiftr {n} (x y : bv n) : bv n := (* SMT: bvlshr *)
 Definition bv_ashiftr {n} (x y : bv n) : bv n := (* SMT: bvashr *)
   Zmod.srs x (bv_unsigned y).
 
-Definition bv_or {n} (x y : bv n) : bv n := (* SMT: bvor *)
-  Zmod.or x y.
-Definition bv_and {n} (x y : bv n) : bv n := (* SMT: bvand *)
-  Zmod.and x y.
-Definition bv_xor {n} (x y : bv n) : bv n := (* SMT: bvxor *)
-  Zmod.xor x y.
-Definition bv_not {n} (x : bv n) : bv n := (* SMT: bvnot *)
-  Zmod.not x.
+Abbreviation bv_or := Zmod.or. (* SMT: bvor *)
+Abbreviation bv_and := Zmod.and. (* SMT: bvand *)
+Abbreviation bv_xor := Zmod.xor. (* SMT: bvxor *)
+Abbreviation bv_not := Zmod.not. (* SMT: bvnot *)
+
+(** std++ made all bitvector operations opaque, so [simpl]/[cbn] never
+unfolded them. An abbreviation cannot be made opaque without making the
+[Zmod] operation opaque for everyone, so the [Zmod] operations are only
+marked [simpl never] (a global setting as well, but a much weaker one). *)
+Global Arguments Zmod.add : simpl never.
+Global Arguments Zmod.sub : simpl never.
+Global Arguments Zmod.opp : simpl never.
+Global Arguments Zmod.mul : simpl never.
+Global Arguments Zmod.umod : simpl never.
+Global Arguments Zmod.srem : simpl never.
+Global Arguments Zmod.or : simpl never.
+Global Arguments Zmod.and : simpl never.
+Global Arguments Zmod.xor : simpl never.
+Global Arguments Zmod.not : simpl never.
 
 (* [bv_zero_extends z b] extends [b] to [z] bits with 0. If [z] is
 smaller than [n], [b] is truncated. Note that [z] gives the resulting
@@ -1022,7 +1037,7 @@ Section unfolding.
   Lemma bv_extract_slice s l b :
     bv_extract s l b = Zmod.firstn (Z.of_N l) (Zmod.skipn (Z.of_N s) b).
   Proof.
-    apply bv_eq. rewrite bv_extract_unsigned. unfold bv_unsigned.
+    apply bv_eq. rewrite bv_extract_unsigned. unfold bv_unsigned, bv_modulus.
     rewrite bits.unsigned_firstn, bits.unsigned_skipn by lia.
     by rewrite Z.shiftr_div_pow2 by lia.
   Qed.
@@ -1051,7 +1066,7 @@ Section unfolding.
   Lemma bv_concat_app m n2 b1 (b2 : bv n2) :
     bv_concat m b1 b2 = Zmod.firstn (Z.of_N m) (Zmod.app b2 b1).
   Proof.
-    apply bv_eq. rewrite bv_concat_unsigned'. unfold bv_unsigned.
+    apply bv_eq. rewrite bv_concat_unsigned'. unfold bv_unsigned, bv_modulus.
     rewrite bits.unsigned_firstn, bits.unsigned_app by lia.
     by rewrite Z.lor_comm.
   Qed.
@@ -1088,10 +1103,10 @@ Section properties.
     b1 - b2 = b1 + - b2.
   Proof. symmetry. apply Zmod.add_opp_r. Qed.
 
-  Global Instance bv_add_assoc : Assoc (=) (@bv_add n).
+  Global Instance bv_add_assoc : Assoc (=) (@bv_add (bv_modulus n)).
   Proof. intros ???. apply Zmod.add_assoc. Qed.
 
-  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul n).
+  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul (bv_modulus n)).
   Proof. intros ???. apply Zmod.mul_assoc. Qed.
 
   Lemma bv_add_0_l b1 b2 :
@@ -1444,23 +1459,24 @@ Global Coercion bv_to_bvn : bv >-> bvn.
 
 (** * Opaqueness *)
 (** We mark all functions on bitvectors as opaque. *)
+(** The abbreviations ([bv_add], ...) are not in these lists: making them
+opaque would make the [Zmod] operations opaque for every user of the
+standard library. *)
 Global Hint Opaque Z_to_bv
        bv_0 bv_succ bv_pred
-       bv_add bv_sub bv_opp
-       bv_mul bv_divu bv_modu
-       bv_divs bv_quots bv_mods bv_rems
-       bv_shiftl bv_shiftr bv_ashiftr bv_or
-       bv_and bv_xor bv_not bv_zero_extend
+       bv_divu
+       bv_divs bv_quots bv_mods
+       bv_shiftl bv_shiftr bv_ashiftr
+       bv_zero_extend
        bv_sign_extend bv_extract bv_concat
        bv_add_Z bv_sub_Z bv_mul_Z
        bool_to_bv bv_to_bits : typeclass_instances.
 Global Opaque Z_to_bv
        bv_0 bv_succ bv_pred
-       bv_add bv_sub bv_opp
-       bv_mul bv_divu bv_modu
-       bv_divs bv_quots bv_mods bv_rems
-       bv_shiftl bv_shiftr bv_ashiftr bv_or
-       bv_and bv_xor bv_not bv_zero_extend
+       bv_divu
+       bv_divs bv_quots bv_mods
+       bv_shiftl bv_shiftr bv_ashiftr
+       bv_zero_extend
        bv_sign_extend bv_extract bv_concat
        bv_add_Z bv_sub_Z bv_mul_Z
        bool_to_bv bv_to_bits.
