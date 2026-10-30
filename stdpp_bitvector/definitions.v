@@ -673,6 +673,14 @@ Definition bv_to_bits {n} (b : bv n) : list bool :=
 Declare Scope bv_scope.
 Delimit Scope bv_scope with bv.
 Bind Scope bv_scope with bv.
+(** The arguments of the abbreviated operations ([bv_add x y] is
+[Zmod.add x y]) have type [Zmod _]. The standard library binds [Zmod_scope]
+to [Zmod], but only in files that import [Stdlib.Zmod]; without this line
+[bv_add x 5] or [bv_and (x ≪ 2) y] do not parse unless [bv_scope] is open.
+[Bind Scope] is visible to files that import this one, so this binds
+[bv_scope] to every [Zmod] argument there, including the ones of a plain
+[Zmod m]. *)
+Bind Scope bv_scope with Zmod.
 
 Infix "+" := bv_add : bv_scope.
 Infix "-" := bv_sub : bv_scope.
@@ -691,6 +699,7 @@ Infix "`ashiftr`" := bv_ashiftr (at level 35) : bv_scope.
 Infix "`+Z`" := bv_add_Z (at level 50) : bv_scope.
 Infix "`-Z`" := bv_sub_Z (at level 50) : bv_scope.
 Infix "`*Z`" := bv_mul_Z (at level 40) : bv_scope.
+
 
 (** This adds number notations into [bv_scope].
 If the number literal is positive or 0, it gets expanded to [BV _ {num} _].
