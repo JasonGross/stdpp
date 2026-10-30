@@ -396,6 +396,18 @@ Proof. unfold not. by rewrite bv_eq. Qed.
 Global Instance bv_unsigned_inj n : Inj (=) (=) (@bv_unsigned n).
 Proof. intros ???. by apply bv_eq. Qed.
 
+(** [bv] used to be a record with constructor [BV], so [destruct b] and
+[induction b] gave a [z : Z] and a [BvWf n z]. These eliminators give the
+same shape: [destruct b as [z Hwf] using bv_rect] (or [using bv_ind]). *)
+Lemma bv_BV_unsigned n (b : bv n) : @BV n (bv_unsigned b) (bv_is_wf b) = b.
+Proof. apply bv_eq. apply bv_unsigned_BV. Qed.
+
+Definition bv_rect {n} (P : bv n → Type)
+    (f : ∀ z (Hwf : BvWf n z), P (@BV n z Hwf)) (b : bv n) : P b :=
+  eq_rect _ P (f (bv_unsigned b) (bv_is_wf b)) _ (bv_BV_unsigned n b).
+Definition bv_rec {n} (P : bv n → Set) := @bv_rect n P.
+Definition bv_ind {n} (P : bv n → Prop) := @bv_rect n P.
+
 Definition Z_to_bv_checked (n : N) (z : Z) : option (bv n) :=
   H ← guard (BvWf n z); Some (@BV n z H).
 
@@ -685,12 +697,16 @@ If the number literal is positive or 0, it gets expanded to [BV _ {num} _].
 If the number literal is negative, it gets expanded as [Z_to_bv _ {num}].
 In the negative case, the notation is parsing only and the [Z_to_bv] call will be
 printed explicitly. *)
-Inductive bv_number_notation := BVNumNonNeg (z : Z) | BVNumNeg (z : Z).
+Inductive bv_number_notation := BVNumNonNeg (z : Z) | BVNumNeg (z : Z) | BVNumMk (z : Z).
 Definition bv_number_notation_to_Z (n : bv_number_notation) : option Z :=
   match n with
   | BVNumNonNeg z => Some z
   (** Don't use the notation for negative numbers for printing. *)
   | BVNumNeg z => None
+  (** [vm_compute] and friends normalize a bitvector to [Zmod.mk m z pf];
+  print it as a number too. [Z_to_bv_number_notation] never produces
+  [BVNumMk], so this is printing only. *)
+  | BVNumMk z => Some z
   end.
 Definition Z_to_bv_number_notation (z : Z) :=
   match z with
@@ -702,12 +718,15 @@ Definition Z_to_bv_number_notation (z : Z) :=
 Z_to_bv such that we can pass them to [Number Notation]. *)
 Local Arguments Z_to_bv {_} _.
 Local Arguments BV {_} _ {_}.
+Local Arguments ZmodDef.Zmod.mk {_} _ {_}.
 (* [bv n] unfolds to [Zmod _], which the number notation machinery notices. *)
 #[warnings="-via-type-remapping,-via-type-mismatch"]
 Number Notation bv Z_to_bv_number_notation bv_number_notation_to_Z
-  (via bv_number_notation mapping [[BV] => BVNumNonNeg, [Z_to_bv] => BVNumNeg]) : bv_scope.
+  (via bv_number_notation mapping [[BV] => BVNumNonNeg, [Z_to_bv] => BVNumNeg,
+                                   [ZmodDef.Zmod.mk] => BVNumMk]) : bv_scope.
 Local Arguments BV _ _ {_}.
 Local Arguments Z_to_bv : clear implicits.
+Local Arguments ZmodDef.Zmod.mk : clear implicits.
 
 (** * [bv_wrap_simplify]: typeclass-based automation for simplifying [bv_wrap] *)
 (** The [bv_wrap_simplify] tactic removes [bv_wrap] where possible by
