@@ -1461,6 +1461,21 @@ Global Arguments bvn_to_bv !_ !_ /.
 
 Global Coercion bv_to_bvn : bv >-> bvn.
 
+(** * Unfolding to the standard library *)
+(** Every operation is a definition that unfolds to a [Zmod] operation (or to
+[Zmod.of_Z] of a [Z] expression), so the standard library lemmas apply after
+unfolding: [bv_to_zmod] unfolds the wrappers in the goal (or [in *]), after
+which [rewrite bits.unsigned_add] and friends work. [bv_zmod_db] is the
+[autounfold] database behind it. *)
+Create HintDb bv_zmod_db.
+Global Hint Unfold bv bv_unsigned bv_signed BV bv_0
+       bv_add bv_sub bv_opp bv_mul bv_modu bv_rems
+       bv_shiftl bv_shiftr bv_ashiftr bv_or bv_and bv_xor bv_not
+       bv_zero_extend bv_modulus : bv_zmod_db.
+Tactic Notation "bv_to_zmod" := autounfold with bv_zmod_db.
+Tactic Notation "bv_to_zmod" "in" hyp(H) := autounfold with bv_zmod_db in H.
+Tactic Notation "bv_to_zmod" "in" "*" := autounfold with bv_zmod_db in *.
+
 (** * Opaqueness *)
 (** We mark all functions on bitvectors as opaque. *)
 Global Hint Opaque Z_to_bv
@@ -1473,13 +1488,26 @@ Global Hint Opaque Z_to_bv
        bv_sign_extend bv_extract bv_concat
        bv_add_Z bv_sub_Z bv_mul_Z
        bool_to_bv bv_to_bits : typeclass_instances.
+(** The wrappers of a [Zmod] operation are [simpl never] instead of opaque,
+so that [bv_to_zmod] (and [unfold]) can expose the [Zmod] operation. *)
+Global Arguments bv_add : simpl never.
+Global Arguments bv_sub : simpl never.
+Global Arguments bv_opp : simpl never.
+Global Arguments bv_mul : simpl never.
+Global Arguments bv_modu : simpl never.
+Global Arguments bv_rems : simpl never.
+Global Arguments bv_or : simpl never.
+Global Arguments bv_and : simpl never.
+Global Arguments bv_xor : simpl never.
+Global Arguments bv_not : simpl never.
+Global Arguments bv_shiftl : simpl never.
+Global Arguments bv_shiftr : simpl never.
+Global Arguments bv_ashiftr : simpl never.
+Global Arguments bv_zero_extend : simpl never.
 Global Opaque Z_to_bv
        bv_0 bv_succ bv_pred
-       bv_add bv_sub bv_opp
-       bv_mul bv_divu bv_modu
-       bv_divs bv_quots bv_mods bv_rems
-       bv_shiftl bv_shiftr bv_ashiftr bv_or
-       bv_and bv_xor bv_not bv_zero_extend
+       bv_divu
+       bv_divs bv_quots bv_mods
        bv_sign_extend bv_extract bv_concat
        bv_add_Z bv_sub_Z bv_mul_Z
        bool_to_bv bv_to_bits.

@@ -231,3 +231,28 @@ bitvectors was already impractical.
   `Zmod_scope` printing should interact, and move the remaining std++ lemmas
   that have stdlib counterparts (`bits.unsigned_range`, `signed_range'`, ...)
   to aliases.
+
+## Strategy `definitions`: wrappers, `simpl never`, an unfold tactic (branch `zmod-bitvector-definitions`)
+
+Built on the definition-based port (`853f1e8`, before the abbreviations) plus
+the eliminators and the `Zmod.mk` printing. The ten pure wrappers
+(`Definition bv_add {n} (x y : bv n) := Zmod.add x y`, ...) and the shifts and
+`bv_zero_extend` are `simpl never` instead of `Global Opaque`, and
+`bv_to_zmod` (`autounfold with bv_zmod_db`, also `in H` / `in *`) unfolds
+`bv`, `bv_unsigned`, `bv_signed`, `BV`, `bv_0`, the wrappers and
+`bv_modulus` to their `Zmod` form.
+
+- std++ `make` and both `.ref` outputs: unchanged.
+- The implicit of `bv_add` is the width: `@bv_add 64`, `@bv_add _64` and
+  `Assoc (=) (@bv_add n)` are as in std++; no scope binding on `Zmod` is
+  needed (arguments have type `bv n`).
+- `rewrite bits.unsigned_add` / `Zmod.unsigned_add`: not directly (the goal
+  says `bv_add`, the lemma `Zmod.add`); after `bv_to_zmod` both rewrite
+  (`bv_to_zmod; rewrite bits.unsigned_add` checked). `bv_add x y` and
+  `Zmod.add x y` are convertible, so `exact`/`apply` work without it.
+- Prints: `(x + y)%bv : bv 64` for `bv_add x y`, `(x + y)%Zmod : bits
+  (Z.of_N 64)` for `Zmod.add x y`; `vm_compute` gives `7%bv`. `Search bv_add`
+  does not show the stdlib lemmas.
+- Cost: `cbv`/`lazy`/`unfold` go through the wrappers where `Global Opaque`
+  used to stop them (as with the abbreviations); `simpl`/`cbn` do not.
+- Downstream checks for this strategy (same workspaces and the same user-side edits as before: 1 line in coq-sail, 83 `check_eq` sites in rocq-linux-process-semantics; casemate and the sail-tiny-arm snapshot unmodified): all four build; casemate unmodified.
