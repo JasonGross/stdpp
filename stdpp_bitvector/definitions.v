@@ -346,11 +346,9 @@ Qed.
 that is known (via [BvWf]) to be in range; [bv_unsigned] and
 [bv_signed] are thin wrappers around [Zmod.unsigned] and the
 signed interpretation. *)
-(** The modulus is written [bv_modulus n], which is [simpl never], and not
-[2 ^ Z.of_N n]: it is the hidden argument of every [Zmod] operation on
-[bv n], and [simpl]/[cbn] must not rewrite it in one place and not in another
-(a [destruct (a + 1)] would then not find [a + 1] in the goal). *)
-Definition bv (n : N) : Set := Zmod (bv_modulus n).
+(** [bv n] is literally the standard library's [bits (Z.of_N n)], so the
+hidden modulus of every operation is [2 ^ Z.of_N n]. *)
+Definition bv (n : N) : Set := bits (Z.of_N n).
 
 Definition BV (n : N) (z : Z) {H : BvWf n z} : bv n :=
   Zmod.of_small_Z (bv_modulus n) z.
@@ -1131,10 +1129,10 @@ Section properties.
     b1 - b2 = b1 + - b2.
   Proof. symmetry. apply Zmod.add_opp_r. Qed.
 
-  Global Instance bv_add_assoc : Assoc (=) (@bv_add (bv_modulus n)).
+  Global Instance bv_add_assoc : Assoc (=) (@bv_add (2 ^ Z.of_N n)).
   Proof. intros ???. apply Zmod.add_assoc. Qed.
 
-  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul (bv_modulus n)).
+  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul (2 ^ Z.of_N n)).
   Proof. intros ???. apply Zmod.mul_assoc. Qed.
 
   Lemma bv_add_0_l b1 b2 :

@@ -309,3 +309,25 @@ bitvectors was already impractical.
   `Zmod_scope` printing should interact, and move the remaining std++ lemmas
   that have stdlib counterparts (`bits.unsigned_range`, `signed_range'`, ...)
   to aliases.
+
+## Strategy `bits`: `bv n := bits (Z.of_N n)` with the abbreviations (branch `zmod-bitvector-bits`)
+
+Same as `zmod-bitvector` (abbreviations for the ten pure aliases) but `bv n`
+is literally `bits (Z.of_N n)`, so the hidden modulus is `2 ^ Z.of_N n` and
+the type of `bv_add x y` prints as `bits (Z.of_N 64)`.
+
+- std++ `make` and both `.ref` outputs: unchanged.
+- `rewrite bits.unsigned_add` on `Zmod.unsigned (bv_add x y)`: works directly
+  (the only strategy where the specialized `bits.*` lemmas rewrite without
+  `unfold bv_modulus`); `rewrite Zmod.unsigned_add`: works. Under
+  `bv_unsigned` (a definition) neither rewrites, as in every strategy.
+- Prints: `(x + y)%bv : bits (Z.of_N 64)`; `vm_compute` gives `7%bv`.
+- Downstream checks for this strategy (same workspaces and the same user-side edits as before: 1 line in coq-sail, 83 `check_eq` sites in rocq-linux-process-semantics; casemate and the sail-tiny-arm snapshot unmodified): coq-sail: builds. sail-tiny-arm: builds. casemate: fails
+  (`@bv_add _64`, the implicit is the modulus). rocq-linux-process-semantics:
+  fails in `LinuxProcessSem/State.v` (`cbn` turns the hidden
+  `2 ^ Z.of_N 64` into `2 ^ 64` in the goal, `destruct (a + 1)` finds
+  nothing). With `Global Arguments Z.of_N : simpl never` (tried, not kept)
+  `State.v` passes but `Sys/Net/Socket.v` fails, where a proof needs
+  `Z.of_N 64` to simplify. So the width-shaped modulus needs its own constant
+  (`bv_modulus`, as on `zmod-bitvector`), or the `bv_modulus`/`2 ^ Z.of_N`
+  mismatch has to be accepted.
