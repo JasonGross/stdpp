@@ -309,3 +309,21 @@ bitvectors was already impractical.
   `Zmod_scope` printing should interact, and move the remaining std++ lemmas
   that have stdlib counterparts (`bits.unsigned_range`, `signed_range'`, ...)
   to aliases.
+
+## Strategy `width-notation`: `@bv_add n` parses again (branch `zmod-bitvector-width-notation`)
+
+Same as `zmod-bitvector` plus ten parsing-only notations
+`Notation "'@' 'bv_add' n" := (@Zmod.add (bv_modulus n))` (and the same for
+sub, opp, mul, modu, rems, or, and, xor, not). std++'s spelling `@bv_add n`
+with the width `n : N` is accepted again, including `Definition bv_add_64 :=
+@bv_add _64` as casemate writes it. The term is still `Zmod.add`.
+
+- std++ `make` and both `.ref` outputs: unchanged.
+- `rewrite Zmod.unsigned_add` on `Zmod.unsigned (bv_add x y)`: works directly;
+  `rewrite bits.unsigned_add`: needs `unfold bv_modulus` first (keyed
+  matching sees `bv_modulus n`, the lemma has `2 ^ n`); `apply`/`exact` of
+  either lemma work.
+- Prints: `(x + y)%bv : Zmod (bv_modulus 64)`; `vm_compute` gives `7%bv`.
+- Cost: `@bv_add m` with a modulus `m` is no longer writable (the notation
+  wins), and a bare `@bv_add` without an argument does not parse.
+- Downstream checks for this strategy (same workspaces and the same user-side edits as before: 1 line in coq-sail, 83 `check_eq` sites in rocq-linux-process-semantics; casemate and the sail-tiny-arm snapshot unmodified): all four build; casemate unmodified.

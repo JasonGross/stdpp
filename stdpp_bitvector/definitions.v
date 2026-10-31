@@ -621,6 +621,22 @@ Global Arguments Zmod.and : simpl never.
 Global Arguments Zmod.xor : simpl never.
 Global Arguments Zmod.not : simpl never.
 
+(** std++ code writes [@bv_add n] with the width [n : N]; the explicit form
+of the abbreviation is [@Zmod.add (bv_modulus n)]. These parsing-only
+notations keep the std++ spelling: [@bv_add n] is [@Zmod.add (bv_modulus n)].
+They take precedence over [@bv_add m] with a modulus [m], and a bare
+[@bv_add] without an argument does not parse. *)
+Notation "'@' 'bv_add' n" := (@Zmod.add (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_sub' n" := (@Zmod.sub (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_opp' n" := (@Zmod.opp (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_mul' n" := (@Zmod.mul (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_modu' n" := (@Zmod.umod (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_rems' n" := (@Zmod.srem (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_or' n" := (@Zmod.or (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_and' n" := (@Zmod.and (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_xor' n" := (@Zmod.xor (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_not' n" := (@Zmod.not (bv_modulus n)) (at level 10, n at level 9, only parsing).
+
 (* [bv_zero_extends z b] extends [b] to [z] bits with 0. If [z] is
 smaller than [n], [b] is truncated. Note that [z] gives the resulting
 size instead of the number of bits to add (as SMTLIB does) to avoid a
@@ -1131,10 +1147,10 @@ Section properties.
     b1 - b2 = b1 + - b2.
   Proof. symmetry. apply Zmod.add_opp_r. Qed.
 
-  Global Instance bv_add_assoc : Assoc (=) (@bv_add (bv_modulus n)).
+  Global Instance bv_add_assoc : Assoc (=) (@bv_add n).
   Proof. intros ???. apply Zmod.add_assoc. Qed.
 
-  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul (bv_modulus n)).
+  Global Instance bv_mul_assoc : Assoc (=) (@bv_mul n).
   Proof. intros ???. apply Zmod.mul_assoc. Qed.
 
   Lemma bv_add_0_l b1 b2 :
