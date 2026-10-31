@@ -327,3 +327,21 @@ with the width `n : N` is accepted again, including `Definition bv_add_64 :=
 - Cost: `@bv_add m` with a modulus `m` is no longer writable (the notation
   wins), and a bare `@bv_add` without an argument does not parse.
 - Downstream checks for this strategy (same workspaces and the same user-side edits as before: 1 line in coq-sail, 83 `check_eq` sites in rocq-linux-process-semantics; casemate and the sail-tiny-arm snapshot unmodified): all four build; casemate unmodified.
+
+## Full patch set for strategy 1 on top of strategy 2 (branch `zmod-bitvector-width-notation-bits`)
+
+This branch is `zmod-bitvector-width-notation` plus one commit: `bv n :=
+bits (Z.of_N n)` (no `bv_modulus` in the type; the `@bv_add n` notations
+expand to `@Zmod.add (2 ^ Z.of_N n)`). std++ `make` and both `.ref` outputs
+are unchanged; `rewrite bits.unsigned_add` works directly.
+
+Downstream, on top of the strategy-2 branches: coq-sail, casemate and the
+sail-tiny-arm snapshot need no additional change (casemate's `@bv_add _64`
+goes through the notation). rocq-linux-process-semantics needs one more
+commit (2 files, 13 insertions, 8 deletions, 7 proof sites): after `cbn`
+the hidden modulus of `a + 1` in the goal is `2 ^ 64` while a retyped
+`a + 1` has `2 ^ Z.of_N 64`, so `destruct (read_bytes_aux mp (a + 1) k)` and
+`specialize (IH (a + 1)); lia` no longer meet the goal's term. The fix is
+local: `destruct (read_bytes_aux mp _ k)`, `apply le_n_S, IH`,
+`rewrite (IH n mp _ r _ Hr)`. `Global Arguments Z.of_N : simpl never` was
+not used (it breaks `Sys/Net/Socket.v`).

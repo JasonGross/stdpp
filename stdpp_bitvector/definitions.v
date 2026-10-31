@@ -346,11 +346,9 @@ Qed.
 that is known (via [BvWf]) to be in range; [bv_unsigned] and
 [bv_signed] are thin wrappers around [Zmod.unsigned] and the
 signed interpretation. *)
-(** The modulus is written [bv_modulus n], which is [simpl never], and not
-[2 ^ Z.of_N n]: it is the hidden argument of every [Zmod] operation on
-[bv n], and [simpl]/[cbn] must not rewrite it in one place and not in another
-(a [destruct (a + 1)] would then not find [a + 1] in the goal). *)
-Definition bv (n : N) : Set := Zmod (bv_modulus n).
+(** [bv n] is literally the standard library's [bits (Z.of_N n)], so the
+hidden modulus of every operation is [2 ^ Z.of_N n]. *)
+Definition bv (n : N) : Set := bits (Z.of_N n).
 
 Definition BV (n : N) (z : Z) {H : BvWf n z} : bv n :=
   Zmod.of_small_Z (bv_modulus n) z.
@@ -623,19 +621,19 @@ Global Arguments Zmod.not : simpl never.
 
 (** std++ code writes [@bv_add n] with the width [n : N]; the explicit form
 of the abbreviation is [@Zmod.add (bv_modulus n)]. These parsing-only
-notations keep the std++ spelling: [@bv_add n] is [@Zmod.add (bv_modulus n)].
+notations keep the std++ spelling: [@bv_add n] is [@Zmod.add (2 ^ Z.of_N n)].
 They take precedence over [@bv_add m] with a modulus [m], and a bare
 [@bv_add] without an argument does not parse. *)
-Notation "'@' 'bv_add' n" := (@Zmod.add (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_sub' n" := (@Zmod.sub (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_opp' n" := (@Zmod.opp (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_mul' n" := (@Zmod.mul (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_modu' n" := (@Zmod.umod (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_rems' n" := (@Zmod.srem (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_or' n" := (@Zmod.or (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_and' n" := (@Zmod.and (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_xor' n" := (@Zmod.xor (bv_modulus n)) (at level 10, n at level 9, only parsing).
-Notation "'@' 'bv_not' n" := (@Zmod.not (bv_modulus n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_add' n" := (@Zmod.add (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_sub' n" := (@Zmod.sub (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_opp' n" := (@Zmod.opp (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_mul' n" := (@Zmod.mul (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_modu' n" := (@Zmod.umod (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_rems' n" := (@Zmod.srem (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_or' n" := (@Zmod.or (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_and' n" := (@Zmod.and (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_xor' n" := (@Zmod.xor (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
+Notation "'@' 'bv_not' n" := (@Zmod.not (2 ^ Z.of_N n)) (at level 10, n at level 9, only parsing).
 
 (* [bv_zero_extends z b] extends [b] to [z] bits with 0. If [z] is
 smaller than [n], [b] is truncated. Note that [z] gives the resulting
