@@ -558,7 +558,12 @@ Definition gmap_to_pmap {A} (m : gmap positive A) : Pmap A :=
 
 Local Lemma lookup_gmap_dep_ne_to_pmap_ne {A P} (t : gmap_dep_ne A P) i :
   gmap_dep_ne_to_pmap_ne t !! i = gmap_dep_ne_lookup i t.
-Proof. revert i; induction t; intros []; by simpl. Qed.
+Proof.
+  (* [Pmap_ne] lookup is [Trie.get']; [simpl] exposes it in the goal but not
+     in the induction hypothesis *)
+  revert i; induction t; intros []; simpl;
+    unfold lookup, Pmap_ne_lookup in *; by simpl in *.
+Qed.
 Lemma lookup_gmap_to_pmap {A} (m : gmap positive A) i :
   gmap_to_pmap m !! i = m !! i.
 Proof. destruct m as [[|t]]; [done|]. apply lookup_gmap_dep_ne_to_pmap_ne. Qed.
@@ -586,9 +591,15 @@ Definition pmap_to_gmap {A} (m : Pmap A) : gmap positive A :=
 
 Local Lemma lookup_pmap_ne_to_gmap_dep_ne {A P} (p : ∀ i, P i) (t : Pmap_ne A) i :
   gmap_dep_ne_lookup i (pmap_ne_to_gmap_dep_ne p t) = t !! i.
-Proof. revert P i p; induction t; intros ? [] ?; by simpl. Qed.
+Proof.
+  revert P i p; induction t; intros ? [] ?; simpl;
+    unfold lookup, Pmap_ne_lookup in *; by simpl in *.
+Qed.
 Lemma lookup_pmap_to_gmap {A} (m : Pmap A) i : pmap_to_gmap m !! i = m !! i.
-Proof. destruct m as [|t]; [done|]. apply lookup_pmap_ne_to_gmap_dep_ne. Qed.
+Proof.
+  (* [Pmap A] is [option (Pmap_ne A)]: [Some] comes first *)
+  destruct m as [t|]; [|done]. apply lookup_pmap_ne_to_gmap_dep_ne.
+Qed.
 
 (** * Finite sets *)
 Definition gset K `{Countable K} := mapset (gmap K).

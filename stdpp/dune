@@ -3,4 +3,4 @@
  (name stdpp)
  (package rocq-stdpp)
  (generate_project_file)
- (theories Stdlib))
+ (theories Stdlib Trie))

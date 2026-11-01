@@ -1,0 +1,4 @@
+(rocq.theory
+ (name Trie)
+ (package rocq-stdpp)
+ (theories Stdlib))

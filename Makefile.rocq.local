@@ -15,7 +15,7 @@ real-all: style $(if $(NO_TEST),,test)
 style:
 # Linting.
 	$(SHOW)"ROCQ lint"
-	$(HIDE)for FILE in $(VFILES); do \
+	$(HIDE)for FILE in $(filter-out stdpp_trie/%,$(VFILES)); do \
 	  ./rocq-lint.sh "$$FILE" || exit 1; \
 	done
 .PHONY: style

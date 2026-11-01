@@ -56,6 +56,8 @@ stdpp/telescopes.v
 stdpp/binders.v
 stdpp/ssreflect.v
 
+stdpp_trie/Trie.v
+
 stdpp_bitvector/definitions.v
 stdpp_bitvector/tactics.v
 stdpp_bitvector/bitvector.v

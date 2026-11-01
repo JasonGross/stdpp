@@ -5,3 +5,4 @@
 stdpp stdpp
 stdpp_bitvector stdpp.bitvector
 stdpp_unstable stdpp.unstable
+stdpp_trie Trie

@@ -10,83 +10,62 @@ and Leroy, https://hal.inria.fr/hal-03372247. It has various good properties:
 - It can be used in nested recursive definitions, e.g.,
   [Inductive test := Test : Pmap test → test]. This is possible because we do
   _not_ use a Sigma type to ensure canonical representations (a Sigma type would
-  break Rocq's strict positivity check). *)
+  break Rocq's strict positivity check).
+
+This version of the file is a wrapper around the standard library's [Trie]
+([Stdlib.EMaps.Trie], here the vendored copy [Trie.Trie]), which is the same
+canonical trie: [Pmap_ne A] is [branch A] and [Pmap A] is [trie A], i.e.
+[option (branch A)]. [lookup], [partial_alter], [fmap], [omap] and [merge] are
+the [Trie] operations [get], [set]/[remove], [map_filter] and [combine];
+[map_fold] is std++'s own structural fold, because [Trie] only has a fold
+through [elements] (the [FMapInterface] one). *)
 From stdpp Require Export countable finite fin_maps fin_map_dom.
 From stdpp Require Import mapset.
+From Trie Require Import Trie.
+From stdpp Require Import options.
 
 Local Open Scope positive_scope.
 
 (** * The trie data structure *)
-(** To obtain canonical representations, we need to make sure that the "empty"
-trie is represented uniquely. That is, each node should either have a value, a
-non-empty left subtrie, or a non-empty right subtrie. The [Pmap_ne] type
-enumerates all ways of constructing non-empty canonical trie. *)
-Inductive Pmap_ne (A : Type) :=
-  | PNode001 : Pmap_ne A → Pmap_ne A
-  | PNode010 : A → Pmap_ne A
-  | PNode011 : A → Pmap_ne A → Pmap_ne A
-  | PNode100 : Pmap_ne A → Pmap_ne A
-  | PNode101 : Pmap_ne A → Pmap_ne A → Pmap_ne A
-  | PNode110 : Pmap_ne A → A → Pmap_ne A
-  | PNode111 : Pmap_ne A → A → Pmap_ne A → Pmap_ne A.
-Global Arguments PNode001 {A} _ : assert.
-Global Arguments PNode010 {A} _ : assert.
-Global Arguments PNode011 {A} _ _ : assert.
-Global Arguments PNode100 {A} _ : assert.
-Global Arguments PNode101 {A} _ _ : assert.
-Global Arguments PNode110 {A} _ _ : assert.
-Global Arguments PNode111 {A} _ _ _ : assert.
+(** [Pmap_ne A] is the type of non-empty canonical tries, [Pmap A] adds the
+empty trie. These are [Trie.branch] and [Trie.trie]. *)
+Notation Pmap_ne := branch.
+Notation PNode001 := Node001.
+Notation PNode010 := Node010.
+Notation PNode011 := Node011.
+Notation PNode100 := Node100.
+Notation PNode101 := Node101.
+Notation PNode110 := Node110.
+Notation PNode111 := Node111.
 
-(** Using [Variant] we suppress the generation of the induction scheme. We use
-the induction scheme [Pmap_ind] in terms of the smart constructors to reduce the
-number of cases, similar to Appel and Leroy. *)
-Variant Pmap (A : Type) := PEmpty : Pmap A | PNodes : Pmap_ne A → Pmap A.
-Global Arguments PEmpty {A}.
-Global Arguments PNodes {A} _.
+Definition Pmap (A : Type) : Type := trie A.
+(** [Pmap A] unfolds to [option (Pmap_ne A)]; without this, type class search
+would also find the [option] instances (for example [option_union], which
+made [m1 ∪ m2] return [m1]). *)
+Global Typeclasses Opaque Pmap.
+Notation PEmpty := (@None _) (only parsing).
+Notation PNodes := (@Some _) (only parsing).
 
 Global Instance Pmap_ne_eq_dec `{EqDecision A} : EqDecision (Pmap_ne A).
 Proof. solve_decision. Defined.
 Global Instance Pmap_eq_dec `{EqDecision A} : EqDecision (Pmap A).
-Proof. solve_decision. Defined.
+Proof. unfold Pmap, trie. apply _. Defined.
 
 (** The smart constructor [PNode] and eliminator [Pmap_ne_case] are used to
 reduce the number of cases, similar to Appel and Leroy. *)
 Local Definition PNode {A} (ml : Pmap A) (mx : option A) (mr : Pmap A) : Pmap A :=
-  match ml, mx, mr with
-  | PEmpty, None, PEmpty => PEmpty
-  | PEmpty, None, PNodes r => PNodes (PNode001 r)
-  | PEmpty, Some x, PEmpty => PNodes (PNode010 x)
-  | PEmpty, Some x, PNodes r => PNodes (PNode011 x r)
-  | PNodes l, None, PEmpty => PNodes (PNode100 l)
-  | PNodes l, None, PNodes r => PNodes (PNode101 l r)
-  | PNodes l, Some x, PEmpty => PNodes (PNode110 l x)
-  | PNodes l, Some x, PNodes r => PNodes (PNode111 l x r)
-  end.
-
+  Node ml mx mr.
 Local Definition Pmap_ne_case {A B} (t : Pmap_ne A)
-    (f : Pmap A → option A → Pmap A → B) : B :=
-  match t with
-  | PNode001 r => f PEmpty None (PNodes r)
-  | PNode010 x => f PEmpty (Some x) PEmpty
-  | PNode011 x r => f PEmpty (Some x) (PNodes r)
-  | PNode100 l => f (PNodes l) None PEmpty
-  | PNode101 l r => f (PNodes l) None (PNodes r)
-  | PNode110 l x => f (PNodes l) (Some x) PEmpty
-  | PNode111 l x r => f (PNodes l) (Some x) (PNodes r)
-  end.
+    (f : Pmap A → option A → Pmap A → B) : B := branch_map f t.
 
 (** Operations *)
-Global Instance Pmap_ne_lookup {A} : Lookup positive A (Pmap_ne A) :=
-  fix go i t {struct t} :=
-    let _ : Lookup _ _ _ := @go in
-    match t, i with
-    | (PNode010 x | PNode011 x _ | PNode110 _ x | PNode111 _ x _), 1 => Some x
-    | (PNode100 l | PNode110 l _ | PNode101 l _ | PNode111 l _ _), i~0 => l !! i
-    | (PNode001 r | PNode011 _ r | PNode101 _ r | PNode111 _ _ r), i~1 => r !! i 
-    | _, _ => None
-    end.
-Global Instance Pmap_lookup {A} : Lookup positive A (Pmap A) := λ i mt,
-  match mt with PEmpty => None | PNodes t => t !! i end.
+Global Instance Pmap_lookup {A} : Lookup positive A (Pmap A) := get.
+(** [get i (Some t)] unfolds to this ([Trie.get'] is the fixpoint behind
+[get]); written this way so that [simpl] computes it on a constructor. *)
+Global Instance Pmap_ne_lookup {A} : Lookup positive A (Pmap_ne A) := λ i t,
+  Trie.get' t i.
+Global Arguments Pmap_ne_lookup {_} _ !_ / : assert.
+Global Arguments Pmap_lookup {_} _ !_ / : assert.
 Local Arguments lookup _ _ _ _ _ !_ / : simpl nomatch, assert.
 
 Global Instance Pmap_empty {A} : Empty (Pmap A) := PEmpty.
@@ -99,74 +78,28 @@ And marking [Pmap] consumers as [simpl never] does not work either, see:
 https://gitlab.mpi-sws.org/iris/stdpp/-/merge_requests/171#note_53216 *)
 Global Opaque Pmap_empty.
 
-Local Fixpoint Pmap_ne_singleton {A} (i : positive) (x : A) : Pmap_ne A :=
-  match i with
-  | 1 => PNode010 x
-  | i~0 => PNode100 (Pmap_ne_singleton i x)
-  | i~1 => PNode001 (Pmap_ne_singleton i x)
-  end.
-
-Local Definition Pmap_partial_alter_aux {A} (go : positive → Pmap_ne A → Pmap A)
-    (f : option A → option A) (i : positive) (mt : Pmap A) : Pmap A :=
+(** [partial_alter] is [set] or [remove], depending on the result of [f]. This
+traverses the trie twice (once for [get], once for [set]/[remove]); std++'s
+own version did it once. The outer [match] on the map comes first so that
+[simpl] does not unfold the operation on the opaque [∅], as before. *)
+Local Definition Pmap_partial_alter_def {A} (f : option A → option A)
+    (i : positive) (mt : Pmap A) : Pmap A :=
   match mt with
-  | PEmpty =>
-     match f None with
-     | None => PEmpty | Some x => PNodes (Pmap_ne_singleton i x)
-     end
-  | PNodes t => go i t
+  | PEmpty => match f None with Some x => PNodes (singleton i x) | None => PEmpty end
+  | PNodes t =>
+     match f (Trie.get' t i) with Some x => set i x (PNodes t) | None => remove i (PNodes t) end
   end.
-Local Definition Pmap_ne_partial_alter {A} (f : option A → option A) :
-    positive → Pmap_ne A → Pmap A :=
-  fix go i t {struct t} :=
-    Pmap_ne_case t $ λ ml mx mr,
-      match i with
-      | 1 => PNode ml (f mx) mr
-      | i~0 => PNode (Pmap_partial_alter_aux go f i ml) mx mr
-      | i~1 => PNode ml mx (Pmap_partial_alter_aux go f i mr)
-      end.
-Global Instance Pmap_partial_alter {A} : PartialAlter positive A (Pmap A) := λ f,
-  Pmap_partial_alter_aux (Pmap_ne_partial_alter f) f.
+Global Instance Pmap_partial_alter {A} : PartialAlter positive A (Pmap A) :=
+  Pmap_partial_alter_def.
+Local Lemma Pmap_partial_alter_set_remove {A} (f : option A → option A) i (mt : Pmap A) :
+  partial_alter f i mt =
+    match f (get i mt) with Some x => set i x mt | None => remove i mt end.
+Proof. by destruct mt. Qed.
 
-Local Definition Pmap_ne_fmap {A B} (f : A → B) : Pmap_ne A → Pmap_ne B :=
-  fix go t :=
-    match t with
-    | PNode001 r => PNode001 (go r)
-    | PNode010 x => PNode010 (f x)
-    | PNode011 x r => PNode011 (f x) (go r)
-    | PNode100 l => PNode100 (go l)
-    | PNode101 l r => PNode101 (go l) (go r)
-    | PNode110 l x => PNode110 (go l) (f x)
-    | PNode111 l x r => PNode111 (go l) (f x) (go r)
-    end.
-Global Instance Pmap_fmap : FMap Pmap := λ {A B} f mt,
-  match mt with PEmpty => PEmpty | PNodes t => PNodes (Pmap_ne_fmap f t) end.
-
-Local Definition Pmap_omap_aux {A B} (go : Pmap_ne A → Pmap B) (tm : Pmap A) : Pmap B :=
-  match tm with PEmpty => PEmpty | PNodes t' => go t' end.
-Local Definition Pmap_ne_omap {A B} (f : A → option B) : Pmap_ne A → Pmap B :=
-  fix go t :=
-    Pmap_ne_case t $ λ ml mx mr,
-      PNode (Pmap_omap_aux go ml) (mx ≫= f) (Pmap_omap_aux go mr).
-Global Instance Pmap_omap : OMap Pmap := λ {A B} f,
-  Pmap_omap_aux (Pmap_ne_omap f).
-
-Local Definition Pmap_merge_aux {A B C} (go : Pmap_ne A → Pmap_ne B → Pmap C)
-    (f : option A → option B → option C) (mt1 : Pmap A) (mt2 : Pmap B) : Pmap C :=
-  match mt1, mt2 with
-  | PEmpty, PEmpty => PEmpty
-  | PNodes t1', PEmpty => Pmap_ne_omap (λ x, f (Some x) None) t1'
-  | PEmpty, PNodes t2' => Pmap_ne_omap (λ x, f None (Some x)) t2'
-  | PNodes t1', PNodes t2' => go t1' t2'
-  end.
-Local Definition Pmap_ne_merge {A B C} (f : option A → option B → option C) :
-    Pmap_ne A → Pmap_ne B → Pmap C :=
-  fix go t1 t2 {struct t1} :=
-    Pmap_ne_case t1 $ λ ml1 mx1 mr1,
-      Pmap_ne_case t2 $ λ ml2 mx2 mr2,
-        PNode (Pmap_merge_aux go f ml1 ml2) (diag_None f mx1 mx2)
-              (Pmap_merge_aux go f mr1 mr2).
-Global Instance Pmap_merge : Merge Pmap := λ {A B C} f,
-  Pmap_merge_aux (Pmap_ne_merge f) f.
+Global Instance Pmap_fmap : FMap Pmap := λ {A B} f mt, map_filter (λ x, Some (f x)) mt.
+Global Instance Pmap_omap : OMap Pmap := λ {A B} f mt, map_filter f mt.
+Global Instance Pmap_merge : Merge Pmap := λ {A B C} f mt1 mt2,
+  combine (diag_None f) mt1 mt2.
 
 Local Definition Pmap_fold_aux {A B} (go : positive → B → Pmap_ne A → B)
     (i : positive) (y : B) (mt : Pmap A) : B :=
@@ -183,142 +116,80 @@ Global Instance Pmap_fold {A} : MapFold positive A (Pmap A) := λ {B} f,
 
 (** Proofs *)
 Local Definition PNode_valid {A} (ml : Pmap A) (mx : option A) (mr : Pmap A) :=
-  match ml, mx, mr with PEmpty, None, PEmpty => False | _, _, _ => True end.
+  isBranch ml mx mr.
 Local Lemma Pmap_ind {A} (P : Pmap A → Prop) :
   P PEmpty →
   (∀ ml mx mr, PNode_valid ml mx mr → P ml → P mr → P (PNode ml mx mr)) →
   ∀ mt, P mt.
-Proof.
-  intros Hemp Hnode [|t]; [done|]. induction t.
-  - by apply (Hnode PEmpty None (PNodes _)).
-  - by apply (Hnode PEmpty (Some _) PEmpty).
-  - by apply (Hnode PEmpty (Some _) (PNodes _)).
-  - by apply (Hnode (PNodes _) None PEmpty).
-  - by apply (Hnode (PNodes _) None (PNodes _)).
-  - by apply (Hnode (PNodes _) (Some _) PEmpty).
-  - by apply (Hnode (PNodes _) (Some _) (PNodes _)).
-Qed.
+Proof. intros Hemp Hnode. apply trie_ind; [done|]. intros. by apply (Hnode l o r). Qed.
 
 Local Lemma Pmap_lookup_PNode {A} (ml mr : Pmap A) mx i :
   PNode ml mx mr !! i = match i with 1 => mx | i~0 => ml !! i | i~1 => mr !! i end.
-Proof. by destruct ml, mx, mr, i. Qed.
+Proof. apply get_Node. Qed.
+Local Lemma PNode_Node {A} (ml : Pmap A) mx mr : PNode ml mx mr = Node ml mx mr.
+Proof. done. Qed.
 
-Local Lemma Pmap_ne_lookup_not_None {A} (t : Pmap_ne A) : ∃ i, t !! i ≠ None.
-Proof.
-  induction t; repeat select (∃ _, _) (fun H => destruct H);
-    try first [by eexists 1|by eexists _~0|by eexists _~1].
-Qed.
-Local Lemma Pmap_eq_empty {A} (mt : Pmap A) : (∀ i, mt !! i = None) → mt = ∅.
-Proof.
-  intros Hlookup. destruct mt as [|t]; [done|].
-  destruct (Pmap_ne_lookup_not_None t); naive_solver.
-Qed.
 Local Lemma Pmap_eq {A} (mt1 mt2 : Pmap A) : (∀ i, mt1 !! i = mt2 !! i) → mt1 = mt2.
-Proof.
-  revert mt2. induction mt1 as [|ml1 mx1 mr1 _ IHl IHr] using Pmap_ind;
-    intros mt2 Hlookup; destruct mt2 as [|ml2 mx2 mr2 _ _ _] using Pmap_ind.
-  - done.
-  - symmetry. apply Pmap_eq_empty. naive_solver.
-  - apply Pmap_eq_empty. naive_solver.
-  - f_equal.
-    + apply IHl. intros i. generalize (Hlookup (i~0)).
-      by rewrite !Pmap_lookup_PNode.
-    + generalize (Hlookup 1). by rewrite !Pmap_lookup_PNode.
-    + apply IHr. intros i. generalize (Hlookup (i~1)).
-      by rewrite !Pmap_lookup_PNode.
-Qed.
+Proof. apply extensionality. Qed.
 
-Local Lemma Pmap_ne_lookup_singleton_eq {A} i (x : A) :
-  Pmap_ne_singleton i x !! i = Some x.
-Proof. by induction i. Qed.
-Local Lemma Pmap_ne_lookup_singleton_ne {A} i j (x : A) :
-  i ≠ j → Pmap_ne_singleton i x !! j = None.
-Proof. revert j. induction i; intros [?|?|]; naive_solver. Qed.
+Local Lemma Pmap_insert_set {A} i (x : A) (mt : Pmap A) : <[i:=x]> mt = set i x mt.
+Proof. by destruct mt. Qed.
+Local Lemma Pmap_delete_remove {A} i (mt : Pmap A) : delete i mt = remove i mt.
+Proof. by destruct mt. Qed.
 
 Local Lemma Pmap_partial_alter_PNode {A} (f : option A → option A) i ml mx mr :
-  PNode_valid ml mx mr →
   partial_alter f i (PNode ml mx mr) =
     match i with
     | 1 => PNode ml (f mx) mr
     | i~0 => PNode (partial_alter f i ml) mx mr
     | i~1 => PNode ml mx (partial_alter f i mr)
     end.
-Proof. by destruct ml, mx, mr. Qed.
+Proof.
+  rewrite Pmap_partial_alter_set_remove. unfold PNode. rewrite get_Node.
+  destruct i; rewrite ?Pmap_partial_alter_set_remove; destruct (f _);
+    by rewrite ?set_Node, ?remove_Node.
+Qed.
 Local Lemma Pmap_lookup_partial_alter_eq {A} (f : option A → option A)
     (mt : Pmap A) i :
   partial_alter f i mt !! i = f (mt !! i).
 Proof.
-  revert i. induction mt using Pmap_ind.
-  { intros i. unfold partial_alter; simpl. destruct (f None); simpl; [|done].
-    by rewrite Pmap_ne_lookup_singleton_eq. }
-  intros []; by rewrite Pmap_partial_alter_PNode, !Pmap_lookup_PNode by done.
+  rewrite Pmap_partial_alter_set_remove. unfold lookup, Pmap_lookup.
+  destruct (f (get i mt)) eqn:?; [apply get_set_same|apply get_remove_same].
 Qed.
 Local Lemma Pmap_lookup_partial_alter_ne {A} (f : option A → option A)
     (mt : Pmap A) i j :
   i ≠ j → partial_alter f i mt !! j = mt !! j.
 Proof.
-  revert i j; induction mt using Pmap_ind.
-  { intros i j ?; unfold partial_alter; simpl. destruct (f None); simpl; [|done].
-    by rewrite Pmap_ne_lookup_singleton_ne. }
-  intros [] [] ?;
-    rewrite Pmap_partial_alter_PNode, !Pmap_lookup_PNode by done; auto with lia.
+  intros. rewrite Pmap_partial_alter_set_remove. unfold lookup, Pmap_lookup.
+  destruct (f (get i mt)); [apply get_set_diff|apply get_remove_diff]; done.
 Qed.
 
+Local Lemma Pmap_fmap_PNode {A B} (f : A → B) ml mx mr :
+  f <$> PNode ml mx mr = PNode (f <$> ml) (f <$> mx) (f <$> mr).
+Proof.
+  unfold fmap at 1 3 4, Pmap_fmap, PNode. rewrite map_filter_Node. by destruct mx.
+Qed.
 Local Lemma Pmap_lookup_fmap {A B} (f : A → B) (mt : Pmap A) i :
   (f <$> mt) !! i = f <$> mt !! i.
 Proof.
-  destruct mt as [|t]; simpl; [done|].
-  revert i. induction t; intros []; by simpl.
+  unfold fmap at 1, Pmap_fmap, lookup, Pmap_lookup. rewrite get_map_filter.
+  by destruct (get i mt).
 Qed.
 
 Local Lemma Pmap_omap_PNode {A B} (f : A → option B) ml mx mr :
-  PNode_valid ml mx mr →
   omap f (PNode ml mx mr) = PNode (omap f ml) (mx ≫= f) (omap f mr).
-Proof. by destruct ml, mx, mr. Qed.
+Proof. unfold omap, Pmap_omap, PNode. rewrite map_filter_Node. by destruct mx. Qed.
 Local Lemma Pmap_lookup_omap {A B} (f : A → option B) (mt : Pmap A) i :
   omap f mt !! i = mt !! i ≫= f.
 Proof.
-  revert i. induction mt using Pmap_ind; [done|].
-  intros []; by rewrite Pmap_omap_PNode, !Pmap_lookup_PNode by done.
+  unfold omap, Pmap_omap, lookup, Pmap_lookup. rewrite get_map_filter.
+  by destruct (get i mt).
 Qed.
 
-Section Pmap_merge.
-  Context {A B C} (f : option A → option B → option C).
-
-  Local Lemma Pmap_merge_PNode_PEmpty ml mx mr :
-    PNode_valid ml mx mr →
-    merge f (PNode ml mx mr) ∅ =
-      PNode (omap (λ x, f (Some x) None) ml) (diag_None f mx None)
-            (omap (λ x, f (Some x) None) mr).
-  Proof. by destruct ml, mx, mr. Qed.
-  Local Lemma Pmap_merge_PEmpty_PNode ml mx mr :
-    PNode_valid ml mx mr →
-    merge f ∅ (PNode ml mx mr) =
-      PNode (omap (λ x, f None (Some x)) ml) (diag_None f None mx)
-            (omap (λ x, f None (Some x)) mr).
-  Proof. by destruct ml, mx, mr. Qed.
-  Local Lemma Pmap_merge_PNode_PNode ml1 ml2 mx1 mx2 mr1 mr2 :
-    PNode_valid ml1 mx1 mr1 → PNode_valid ml2 mx2 mr2 →
-    merge f (PNode ml1 mx1 mr1) (PNode ml2 mx2 mr2) =
-      PNode (merge f ml1 ml2) (diag_None f mx1 mx2) (merge f mr1 mr2).
-  Proof. by destruct ml1, mx1, mr1, ml2, mx2, mr2. Qed.
-
-  Local Lemma Pmap_lookup_merge (mt1 : Pmap A) (mt2 : Pmap B) i :
-    merge f mt1 mt2 !! i = diag_None f (mt1 !! i) (mt2 !! i).
-  Proof.
-    revert mt2 i; induction mt1 using Pmap_ind; intros mt2 i.
-    { induction mt2 using Pmap_ind; [done|].
-      rewrite Pmap_merge_PEmpty_PNode, Pmap_lookup_PNode by done.
-      destruct i; rewrite ?Pmap_lookup_omap, Pmap_lookup_PNode; simpl;
-        by repeat destruct (_ !! _). }
-    destruct mt2 using Pmap_ind.
-    { rewrite Pmap_merge_PNode_PEmpty, Pmap_lookup_PNode by done.
-      destruct i; rewrite ?Pmap_lookup_omap, Pmap_lookup_PNode; simpl;
-        by repeat destruct (_ !! _). }
-    rewrite Pmap_merge_PNode_PNode by done.
-    destruct i; by rewrite ?Pmap_lookup_PNode.
-  Qed.
-End Pmap_merge.
+Local Lemma Pmap_lookup_merge {A B C} (f : option A → option B → option C)
+    (mt1 : Pmap A) (mt2 : Pmap B) i :
+  merge f mt1 mt2 !! i = diag_None f (mt1 !! i) (mt2 !! i).
+Proof. apply get_combine. done. Qed.
 
 Section Pmap_fold.
   Local Notation Pmap_fold f := (Pmap_fold_aux (Pmap_ne_fold f)).
@@ -327,7 +198,7 @@ Section Pmap_fold.
     Pmap_fold f i y (PNode ml mx mr) = Pmap_fold f i~1
       (Pmap_fold f i~0
         match mx with None => y | Some x => f (Pos.reverse i) x y end ml) mr.
-  Proof. by destruct ml, mx, mr. Qed.
+  Proof. unfold PNode. by destruct ml, mx, mr. Qed.
 
   Local Lemma Pmap_fold_ind {A} (P : Pmap A → Prop) :
     P PEmpty →
@@ -346,33 +217,34 @@ Section Pmap_fold.
     { apply (IHl (λ mt, P (PNode mt mx PEmpty))).
       { destruct mx as [x|]; [|done].
         replace (PNode PEmpty (Some x) PEmpty)
-          with (<[1:=x]> PEmpty : Pmap A) by done.
+          with (<[1:=x]> (PEmpty : Pmap A)) by done.
         by apply Hinsert. }
       intros i x mt ? Hfold ?.
       replace (PNode (<[i:=x]> mt) mx PEmpty)
-        with (<[i~0:=x]> (PNode mt mx PEmpty)) by (by destruct mt, mx).
+        with (<[i~0:=x]> (PNode mt mx (PEmpty : Pmap A)))
+        by (by rewrite !Pmap_insert_set, !PNode_Node, set_Node).
       apply Hinsert.
       - by rewrite Pmap_lookup_PNode.
       - intros j A' B f g b x'.
-        replace (<[i~0:=x']> (g <$> PNode mt mx PEmpty))
-          with (PNode (<[i:=x']> (g <$> mt)) (g <$> mx) PEmpty)
-          by (by destruct mt, mx).
-        replace (g <$> PNode mt mx PEmpty)
-          with (PNode (g <$> mt) (g <$> mx) PEmpty) by (by destruct mt, mx).
-        rewrite !Pmap_fold_PNode; simpl; auto.
+        replace (<[i~0:=x']> (g <$> PNode mt mx (PEmpty : Pmap A)))
+          with (PNode (<[i:=x']> (g <$> mt)) (g <$> mx) (PEmpty : Pmap A'))
+          by (by rewrite !Pmap_insert_set, Pmap_fmap_PNode, !PNode_Node, set_Node).
+        replace (g <$> PNode mt mx (PEmpty : Pmap A))
+          with (PNode (g <$> mt) (g <$> mx) (PEmpty : Pmap A')) by (by rewrite Pmap_fmap_PNode).
+        rewrite !Pmap_fold_PNode; cbn [Pmap_fold_aux Pos.reverse_go]; auto.
       - done. }
     intros i x mt r ? Hfold.
     replace (PNode ml mx (<[i:=x]> mt))
-      with (<[i~1:=x]> (PNode ml mx mt)) by (by destruct ml, mx, mt).
+      with (<[i~1:=x]> (PNode ml mx mt)) by (by rewrite !Pmap_insert_set, !PNode_Node, set_Node).
     apply Hinsert.
     - by rewrite Pmap_lookup_PNode.
     - intros j A' B f g b x'.
       replace (<[i~1:=x']> (g <$> PNode ml mx mt))
         with (PNode (g <$> ml) (g <$> mx) (<[i:=x']> (g <$> mt)))
-        by (by destruct ml, mx, mt).
+        by (by rewrite !Pmap_insert_set, Pmap_fmap_PNode, !PNode_Node, set_Node).
       replace (g <$> PNode ml mx mt)
-        with (PNode (g <$> ml) (g <$> mx) (g <$> mt)) by (by destruct ml, mx, mt).
-      rewrite !Pmap_fold_PNode; simpl; auto.
+        with (PNode (g <$> ml) (g <$> mx) (g <$> mt)) by (by rewrite Pmap_fmap_PNode).
+      rewrite !Pmap_fold_PNode; cbn [Pmap_fold_aux Pos.reverse_go]; auto.
     - done.
   Qed.
 End Pmap_fold.
